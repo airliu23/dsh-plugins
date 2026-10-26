@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Serial Monitor",
+    "description": "The user opens and closes ports in the panel; the session side is read-only (status/read/wait). No probing, any number of streams, and the log lives in a right-sidebar tab."
+  }
+}

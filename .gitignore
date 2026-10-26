@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# packed artifacts
+*.tgz
+dist/
+
+# plugin test output (locks, declared lists)
+test/.state/
+.state/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# logs
+*.log

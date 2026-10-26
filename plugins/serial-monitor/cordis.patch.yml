@@ -1,0 +1,12 @@
+- insert:
+    - id: serial-monitor
+      name: '@local/serial-monitor'
+      config:
+        pythonPath: python
+        autoStart: true
+        ringChars: 400000
+        # Seed only: the Session owns the list (`serial_monitor watch`), and its
+        # choice is remembered in %TEMP%/dsh-serial-monitor/declared.json.
+        streams:
+          - port: COM23
+            baud: 9600
