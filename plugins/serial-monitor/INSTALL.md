@@ -42,7 +42,7 @@ plugin_manager { action: "install_bundle", target: "<这个包的绝对目录>" 
 
 | 方式 | 做法 | 适合 |
 |---|---|---|
-| **git clone**（首选） | `git clone https://github.com/<you>/dsh-plugins.git`，`target` 填 `<clone 目录>\plugins\serial-monitor` | 同事机器、内网，顺便能升级 |
+| **git clone**（首选） | `git clone https://github.com/airliu23/dsh-plugins.git`，`target` 填 `<clone 目录>\plugins\serial-monitor` | 同事机器、内网，顺便能升级 |
 | **目录拷贝** | 只把 `plugins\serial-monitor` 复制/压缩过去，解压到 `D:\plugins\serial-monitor`，`target` 填这个绝对路径 | 只想给一个插件 |
 | **tgz 中转** | `pnpm pack` 生成 `local-serial-monitor-1.0.0.tgz`（约 25 KB），传过去解压成目录（tar 里是 `package/`，建议改名 `serial-monitor`），再按目录方式装 | 只要一个文件传过去 |
 | **私有 registry** | 改 `name` 成你们自己的 scope（如 `@acme/dsh-serial-monitor`）、去掉 `private: true`、`pnpm publish`，`target` 填 `"@acme/dsh-serial-monitor@1.0.0"` | 多人长期用、要升级通知 |

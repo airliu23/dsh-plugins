@@ -2,6 +2,8 @@
 
 私人收藏的 **DeepSeek Harness (DSH)** 插件仓库。每个插件是一个独立的 **bundle**：自带 `package.json`、`cordis.patch.yml`、Host 半（`index.js`）和 Client 半（`client.js`），装上即用，不需要编译。
 
+仓库地址：<https://github.com/airliu23/dsh-plugins>　克隆：`git clone https://github.com/airliu23/dsh-plugins.git`
+
 ## 目录结构
 
 ```
