@@ -1,6 +1,6 @@
 # dsh-plugins
 
-私人收藏的 [DeepSeek Harness](https://github.com/deepseek-ai) (DSH) 插件仓库。每个插件是一个独立的 **bundle**：自带 `package.json`、`cordis.patch.yml`、Host 半（`index.js`）和 Client 半（`client.js`），装上即用，不需要编译。
+私人收藏的 **DeepSeek Harness (DSH)** 插件仓库。每个插件是一个独立的 **bundle**：自带 `package.json`、`cordis.patch.yml`、Host 半（`index.js`）和 Client 半（`client.js`），装上即用，不需要编译。
 
 ## 目录结构
 
