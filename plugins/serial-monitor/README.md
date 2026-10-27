@@ -29,7 +29,7 @@ serial_monitor { action: "read", sinceLast: true, target: "COM23@9600" }
 serial_monitor { action: "wait", pattern: "boot done|assert|panic", timeoutMs: 10000 }
 ```
 
-读的是面板同一份字节：每路一个 sidecar 子进程写进 Host 的环形缓冲（默认 40 万字符），面板走 `/poll`，工具走同一份缓冲，所以关掉 tab 也不影响会话读数据，反之亦然。
+读的是面板同一份字节：每路一个 sidecar 子进程写进 Host 的环形缓冲（默认 40 万字符），**收到就推**（SSE `/events`），工具走同一份缓冲，所以关掉 tab 也不影响会话读数据，反之亦然。
 
 ## 面板
 
@@ -37,7 +37,7 @@ serial_monitor { action: "wait", pattern: "boot done|assert|panic", timeoutMs: 1
 - 每路一张卡片：状态点、`COM23@9600`、累计字节、该路「停止」，下面是各自的滚动日志。
 - 顶部：`按清单重开`、`全部停止`、`自动滚动`、`清空`、`复制`（多路带 `===== key =====` 分隔）。
 - 第二行：选端口 + 波特率 + `添加`，旁边显示当前清单。
-- 抓取是 300 ms 一轮的增量轮询（空闲 1200 ms）；日志自动跟到最新行，往上翻会先停下，滚回底部又继续跟。
+- 数据是**推送**的：Host 一收到字节就通过 `text/event-stream` 发一帧，面板不再定时轮询；同一路的突发会合并到一帧（~16 ms 窗口），一分钟一万行也不会把浏览器压死。断线后浏览器自动重连，漏掉的字节由 `/poll` 按游标补回。日志自动跟到最新行，往上翻会先停下，滚回底部又继续跟。
 
 ## 结构
 
@@ -51,8 +51,9 @@ serial_monitor { action: "wait", pattern: "boot done|assert|panic", timeoutMs: 1
 路由都要过 `connection.requestRejection` 的鉴权闸（裸 WebServer 路由默认不过闸）。它们服务于面板，也就是用户：
 
 ```
+GET  /plugins/serial-monitor/events                     # text/event-stream：收到就推（snapshot/data/state/meta/gone）
 GET  /plugins/serial-monitor/status
-GET  /plugins/serial-monitor/poll?since=COM23@9600:1234,COM22@115200:0   # 每路各自的游标
+GET  /plugins/serial-monitor/poll?since=COM23@9600:1234,COM22@115200:0   # 每路各自的游标（只用于重连补数）
 POST /plugins/serial-monitor/watch    # { streams:[{port,baud}] } 定义清单
 POST /plugins/serial-monitor/add      # { port, baud }
 POST /plugins/serial-monitor/remove   # { key }
@@ -75,6 +76,7 @@ profile 的 patch 里覆盖这一行即可（`streams` 只是**首次运行的�
     pythonPath: python          # 需要能 import serial
     autoStart: true
     ringChars: 400000
+    # sidecarPath: ./test/fake-sidecar.py   # 只有测试会改它（无硬件跑推送链路）
     streams:
       - port: COM23
         baud: 9600
@@ -87,6 +89,7 @@ profile 的 patch 里覆盖这一行即可（`streams` 只是**首次运行的�
 - 端口被别的程序占着时，卡片和 `status` 都会带上 `error=打不开 COM23 …Access is denied`，不会静默。
 - 右栏 tab 依赖 `@deepseek-ai/dsh-client-ui-sidebar-right` 暴露的两个客户端服务：`sidebarRightTabs.register({id, kind, title})` 与 `sidebarRight.openTab(kind, ...)`。它们由 `ctx.reflect.provide` 提供、不在 Service 目录里，用 `ctx.get('sidebarRightTabs')` / `ctx.get('sidebarRight')` 取；上游若改名，tab 就打不开（按钮会以 tooltip 报错）。自检结果看 `serial_monitor status` 输出里的 `client:` 行。
 - 面板是 session 作用域：未打开会话时它不渲染（标题栏按钮同理），但 Host 侧抓取不受影响。
-- Host 侧冒烟测试：`node test/serial-smoke.mjs`（假 ctx 挂载 `apply()`：验证工具只读并拒绝 watch/add/remove/pause/resume → 面板路由开/停/重开/移除 → 会话 read/wait 读到字节 → `全部停止` 后外部进程能打开端口）。跑之前先把插件停掉，否则真占着 COM 口。
-- 客户端回归测试：`node test/client-refresh.mjs`（迷你 React，验自动重绘 + 自动滚动，含"pre 不滚动时由列容器接手"的布局）。
-- 两个测试都用相对路径，`test/.state/` 存各自的锁与清单（已 gitignore），不会碰你在跑的那几路。
+- Host 侧冒烟测试：`node test/serial-smoke.mjs`（假 ctx 挂载 `apply()`：验证工具只读并拒绝 watch/add/remove/pause/resume → 面板路由开/停/重开/移除 → SSE 握手与 snapshot → 会话 read/wait 读到字节 → `全部停止` 后外部进程能打开端口）。跑之前先把插件停掉，否则真占着 COM 口。
+- 无硬件推送测试：`node test/push-flow.mjs`（把 sidecar 换成 `test/fake-sidecar.py`，走同一条 spawn→stdout→环形缓冲→SSE 链路：snapshot / 收到就推 / 突发合并 / 停止发 `gone` / 工具读同一份字节）。不需要任何串口。
+- 客户端回归测试：`node test/client-refresh.mjs`（迷你 React + 假 EventSource，验推送到达即重绘、30 行突发只重绘一次、`/poll` 只在连接时调一次、自动滚动两种布局）。
+- 三个测试都用相对路径，`test/.state*/` 存各自的锁与清单（已 gitignore），不会碰你在跑的那几路。

@@ -1,20 +1,21 @@
 /**
- * Headless test of the client half: automatic repaint AND auto-scroll.
+ * Headless test of the client half: push-driven repaint AND auto-scroll.
  *
- * Three bugs are covered here, none of them visible without a DOM:
- *   1. `store.apply()` wrote bytes without notifying subscribers, so the panel
- *      only updated after a click.
- *   2. The auto-scroll effect depended on `state.streams`, an array mutated in
- *      place, so it ran once and the log never followed the newest line.
- *   3. When the tab is laid out with auto height the `pre` is not the scroll
- *      container — the column around it is — so pinning only the `pre` did
- *      nothing.
+ * What is covered here, none of it visible without a DOM:
+ *   1. Bytes arrive over the push stream (SSE) and repaint the panel — there
+ *      is no data polling loop any more, so text must appear with `/poll` being
+ *      called exactly once (the connect backfill).
+ *   2. Bursts coalesce: thirty pushed lines must not cost thirty renders.
+ *   3. The auto-scroll effect follows the newest line (it depends on the text
+ *      lengths, not on the mutated `streams` array).
+ *   4. Both layouts follow: a definite-height `pre` scrolls itself, an
+ *      auto-height one leaves the scrolling to the column around it.
  *
  * The harness is a tiny React: hooks keep state across renders and `useEffect`
- * honours its dependency array, which is what made bug 2 invisible to a
- * "just call the component" test. Layout is faked both ways (bug 3).
+ * honours its dependency array, which is what made bug 3 invisible to a
+ * "just call the component" test.
  *
- *   node client-refresh.mjs
+ *   node test/client-refresh.mjs
  */
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -78,6 +79,32 @@ const fakeReact = {
     return slot.ref
   },
 }
+
+// ------------------------------------------------------- fake EventSource
+class FakeEventSource {
+  static all = []
+  constructor(url) {
+    this.url = url
+    this.readyState = 0
+    this.listeners = new Map()
+    FakeEventSource.all.push(this)
+  }
+  addEventListener(type, fn) {
+    const list = this.listeners.get(type) ?? []
+    list.push(fn)
+    this.listeners.set(type, list)
+  }
+  close() {
+    this.readyState = 2
+  }
+  /** Deliver one server frame; `payload` is JSON-encoded like a real stream. */
+  fire(type, payload) {
+    if (this.readyState === 2) return
+    this.readyState = 1
+    for (const fn of this.listeners.get(type) ?? []) fn({ data: payload === undefined ? undefined : JSON.stringify(payload) })
+  }
+}
+globalThis.EventSource = FakeEventSource
 
 const requireStub = (name) => {
   if (name === 'react') return fakeReact
@@ -176,11 +203,14 @@ function render() {
 }
 
 // ---------------------------------------------------------------- fake backend
-let total = 0
+// `/poll` carries no text: every byte in this test must come from the push
+// stream, which is exactly the property under test.
+let pollCalls = 0
+const KEY = 'COM23@9600'
 globalThis.fetch = async (url) => {
   const target = String(url)
   if (target.includes('/poll')) {
-    total += 80
+    pollCalls += 1
     return {
       ok: true,
       status: 200,
@@ -188,7 +218,7 @@ globalThis.fetch = async (url) => {
         manual: false,
         declared: [{ port: 'COM23', baud: 9600 }],
         diag: null,
-        streams: [{ key: 'COM23@9600', port: 'COM23', baud: 9600, running: true, total, cursor: total, error: null, text: `[tx] ping ${total}\n` }],
+        streams: [{ key: KEY, port: 'COM23', baud: 9600, running: true, total: 0, cursor: 0, error: null, text: '' }],
       }),
     }
   }
@@ -203,37 +233,69 @@ const check = (label, condition, detail) => {
 }
 const tick = (ms = 700) => new Promise((resolve) => setTimeout(resolve, ms))
 
-// 1) Mount: no streams yet.
+// 1) Mount: the panel opens the push stream and backfills once.
 render()
-await tick()
-const text = render()
-check('poll delivered text', text.includes('[tx] ping'), `polls delivered, subscriberCalls=${stats.subscriberCalls}`)
-check('subscribers notified without a click', stats.subscriberCalls > 0)
+const source = FakeEventSource.all.at(-1)
+check('opened one push stream', FakeEventSource.all.length === 1 && source?.url.endsWith('/events'), source?.url)
+source.fire('open')
+await tick(150)
+render()
+check('connect backfill fetched once', pollCalls === 1, `pollCalls=${pollCalls}`)
 
-// 2) Definite-height layout: the `pre` is the scroller and must sit at the end.
+// 2) Bytes arrive over the stream: text shows up, polling stays at one call.
+let total = 0
+const push = (text) => {
+  total += text.length
+  source.fire('data', { key: KEY, text, total })
+}
+push('[tx] hello\n')
+await tick(80)
+let text = render()
+check('pushed text renders without polling', text.includes('[tx] hello'))
+check('no recurring poll', pollCalls === 1, `pollCalls=${pollCalls}`)
+
+// 3) A burst of lines coalesces into one repaint per window.
+const before = stats.subscriberCalls
+for (let index = 0; index < 30; index += 1) push(`[tx] line ${index}\n`)
+await tick(80)
+text = render()
+const repaints = stats.subscriberCalls - before
+check('burst of 30 pushes repaints at most twice', repaints <= 2, `${repaints} repaints`)
+check('every pushed line is present', text.includes('[tx] line 29'))
+
+// 4) Definite-height layout: the `pre` is the scroller and must sit at the end.
 const first = cards[0]
 check('scrolled to the newest line (pre scrolls)', first.atBottom, `scrollTop=${first.scrollTop} scrollHeight=${first.scrollHeight}`)
 
-// 3) Scrolling up opts that card out.
+// 5) Scrolling up opts that card out.
 first.scrollTop = 0
 first.onScroll({ currentTarget: first })
-await tick()
+push('[tx] while reading up\n')
+await tick(80)
 render()
 check('stays put after scrolling up', first.scrollTop === 0, `scrollTop=${first.scrollTop}`)
 
-// 4) Back at the bottom re-arms it.
+// 6) Back at the bottom re-arms it.
 first.scrollTop = first.scrollHeight - first.clientHeight
 first.onScroll({ currentTarget: first })
-await tick()
+push('[tx] back at the bottom\n')
+await tick(80)
 render()
 check('follows again once scrolled back down', first.atBottom, `scrollTop=${first.scrollTop}`)
 
-// 5) Auto-height layout: the `pre` cannot scroll, so the column must be pinned.
+// 7) Auto-height layout: the `pre` cannot scroll, so the column must be pinned.
 growMode = true
-await tick()
+push('[tx] tall column\n')
+await tick(80)
 render()
 check('column pinned when the pre cannot scroll', listElement !== null && listElement.atBottom, `listScrollTop=${listElement?.scrollTop} scrollHeight=${listElement?.scrollHeight}`)
 
-console.log(`renders=${stats.renders} subscriberCalls=${stats.subscriberCalls} effectRuns=${stats.effectRuns}`)
+// 8) A closed stream disappears on the pushed `gone` frame.
+source.fire('gone', { key: KEY })
+await tick(40)
+text = render()
+check('gone frame drops the row', text.includes('idle') && !text.includes('line 29'), text.slice(0, 60))
+
+console.log(`renders=${stats.renders} subscriberCalls=${stats.subscriberCalls} effectRuns=${stats.effectRuns} pollCalls=${pollCalls}`)
 for (const dispose of disposers) if (typeof dispose === 'function') dispose()
 process.exit(failures.length === 0 ? 0 : 1)

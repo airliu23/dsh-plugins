@@ -33,6 +33,8 @@ export function apply(ctx, config = {}) {
   }
 
   const pythonPath = typeof config.pythonPath === 'string' && config.pythonPath !== '' ? config.pythonPath : 'python'
+  /** Overridable so a test can drive the whole push path without hardware. */
+  const sidecarPath = typeof config.sidecarPath === 'string' && config.sidecarPath !== '' ? config.sidecarPath : SIDECAR
   const autoStart = config.autoStart !== false
   const ringChars = Number.isFinite(config.ringChars) ? Math.max(4_000, config.ringChars) : 400_000
   /** Lock files + the remembered declared list live here. */
@@ -149,6 +151,90 @@ export function apply(ctx, config = {}) {
     capture.buffer += text
     capture.total += text.length
     ensureRing(capture)
+    queueData(capture, text)
+  }
+
+  // --- push, not polling -----------------------------------------------------
+  // Bytes are pushed to every open `text/event-stream` connection the moment
+  // they arrive from the sidecar. Bursts are coalesced per stream on a short
+  // timer so a 9600-baud line printer does not produce one frame per byte.
+  const listeners = new Set()
+  /** key → { text, total } collected during the current coalescing window. */
+  const pendingData = new Map()
+  let flushTimer = null
+  let heartbeat = null
+  let lastFrameAt = 0
+
+  const sseFrame = (event, payload) => `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
+
+  function broadcast(chunk) {
+    if (listeners.size === 0) return
+    lastFrameAt = Date.now()
+    for (const response of listeners) {
+      try {
+        response.write(chunk)
+      } catch {
+        listeners.delete(response)
+      }
+    }
+    if (listeners.size === 0) stopHeartbeat()
+  }
+
+  function queueData(capture, text) {
+    if (listeners.size === 0) return
+    const entry = pendingData.get(capture.key)
+    if (entry === undefined) pendingData.set(capture.key, { text, total: capture.total })
+    else {
+      entry.text += text
+      entry.total = capture.total
+    }
+    if (flushTimer === null) flushTimer = setTimeout(flushData, 16)
+  }
+
+  function flushData() {
+    flushTimer = null
+    if (pendingData.size === 0) return
+    const frames = []
+    for (const [key, entry] of pendingData) frames.push(sseFrame('data', { key, text: entry.text, total: entry.total }))
+    pendingData.clear()
+    broadcast(frames.join(''))
+  }
+
+  /** A stream opened, closed, or reported an error: meta only, no text. */
+  function publishState(capture) {
+    if (listeners.size === 0) return
+    broadcast(sseFrame('state', streamBase(capture)))
+  }
+
+  /** The user changed the list (add / remove / stop / resume). */
+  function publishMeta() {
+    if (listeners.size === 0) return
+    broadcast(sseFrame('meta', { declared, manual }))
+  }
+
+  /** The user closed one stream: the panel drops that row at once. */
+  function publishGone(key) {
+    if (listeners.size === 0) return
+    pendingData.delete(key)
+    broadcast(sseFrame('gone', { key }))
+  }
+
+  function startHeartbeat() {
+    if (heartbeat !== null) return
+    heartbeat = setInterval(() => {
+      if (listeners.size === 0) {
+        stopHeartbeat()
+        return
+      }
+      if (Date.now() - lastFrameAt >= 12_000) broadcast(': keep-alive\n\n')
+    }, 15_000)
+    heartbeat.unref?.()
+  }
+
+  function stopHeartbeat() {
+    if (heartbeat === null) return
+    clearInterval(heartbeat)
+    heartbeat = null
   }
 
   function clearRetry(key) {
@@ -216,6 +302,7 @@ export function apply(ctx, config = {}) {
     const child = capture.child
     capture.child = null
     if (child !== null) releaseChild(child)
+    publishGone(key)
     return true
   }
 
@@ -238,7 +325,7 @@ export function apply(ctx, config = {}) {
 
     let child
     try {
-      child = spawn(pythonPath, ['-u', SIDECAR, 'read', '--port', port, '--baud', String(baud), '--owner', String(process.pid)], {
+      child = spawn(pythonPath, ['-u', sidecarPath, 'read', '--port', port, '--baud', String(baud), '--owner', String(process.pid)], {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
@@ -268,7 +355,11 @@ export function apply(ctx, config = {}) {
         else if (message.type === 'opened') {
           capture.openedAt = Date.now()
           capture.error = null
-        } else if (message.type === 'error') capture.error = String(message.error ?? message.message ?? '串口错误')
+          publishState(capture)
+        } else if (message.type === 'error') {
+          capture.error = String(message.error ?? message.message ?? '串口错误')
+          publishState(capture)
+        }
       }
     })
     child.stderr.setEncoding('utf8')
@@ -281,8 +372,12 @@ export function apply(ctx, config = {}) {
       capture.child = null
       if (!streams.has(key)) return
       capture.error = capture.error ?? `串口进程退出（code ${code ?? '?'}）`
+      publishState(capture)
       scheduleRetry(port, baud, capture.openedAt === null)
     })
+    // A fresh spawn is visible immediately (running/error/opened) even before
+    // the sidecar says anything, so the panel paints the new row at once.
+    publishState(capture)
     return capture
   }
 
@@ -323,7 +418,7 @@ export function apply(ctx, config = {}) {
 
   function runSidecar(args) {
     return new Promise((resolve) => {
-      const child = spawn(pythonPath, ['-u', SIDECAR, ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+      const child = spawn(pythonPath, ['-u', sidecarPath, ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
       let out = ''
       let err = ''
       child.stdout.setEncoding('utf8')
@@ -378,6 +473,21 @@ export function apply(ctx, config = {}) {
       notes,
       diag,
       streams: [...streams.values()].map((capture) => streamSlice(capture, sinceMap.get(capture.key) ?? 0)),
+    }
+  }
+
+  /**
+   * What a freshly connected push client needs: the lists and the per-stream
+   * state, but none of the buffered text — the client backfills that through
+   * `/poll` with its own cursors, which keeps reconnects gap-free.
+   */
+  function statePayload() {
+    return {
+      manual,
+      declared,
+      notes,
+      diag,
+      streams: [...streams.values()].map((capture) => ({ ...streamBase(capture), cursor: capture.total })),
     }
   }
 
@@ -464,6 +574,20 @@ export function apply(ctx, config = {}) {
     manual = true
     clearAllRetries()
     stopAll()
+    if (flushTimer !== null) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+    pendingData.clear()
+    stopHeartbeat()
+    for (const response of [...listeners]) {
+      listeners.delete(response)
+      try {
+        response.end()
+      } catch {
+        /* client already gone */
+      }
+    }
   }
 
   ctx.effect(() => () => shutdown(), 'serial-monitor: sidecar cleanup')
@@ -531,7 +655,49 @@ export function apply(ctx, config = {}) {
       }
     }
 
+    /**
+     * Server-Sent Events: the Host pushes each burst of received bytes the
+     * moment the sidecar reports it, so the panel never polls for data. The
+     * webserver's gzip middleware already exempts `text/event-stream`, and a
+     * route handler owns its response, so the stream stays open until the
+     * client disconnects.
+     */
+    const pushStream = async (req, res) => {
+      const rejection = ctx.get('connection')?.requestRejection?.(req)
+      if (rejection !== undefined && rejection !== null) {
+        sendJson(res, 401, { error: 'unauthorized' })
+        return
+      }
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache, no-transform',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      })
+      // Reconnect quickly after a dropped connection; gaps are backfilled by
+      // the client from its cursors, so a fast retry costs nothing.
+      res.write('retry: 1500\n\n')
+      res.write(sseFrame('snapshot', statePayload()))
+      listeners.add(res)
+      startHeartbeat()
+      let gone = false
+      const drop = () => {
+        if (gone) return
+        gone = true
+        listeners.delete(res)
+        if (listeners.size === 0) stopHeartbeat()
+      }
+      req.on('close', drop)
+      req.on('aborted', drop)
+      res.on('close', drop)
+      res.on('error', drop)
+    }
+
     const routes = [
+      {
+        path: `${ROUTE_BASE}/events`,
+        handler: pushStream,
+      },
       {
         path: `${ROUTE_BASE}/status`,
         handler: gated(async (req, res) => {
@@ -567,6 +733,7 @@ export function apply(ctx, config = {}) {
             return
           }
           const count = watch(body.streams)
+          publishMeta()
           sendJson(res, 200, { ...snapshot(new Map()), watched: count })
         }),
       },
@@ -589,6 +756,7 @@ export function apply(ctx, config = {}) {
             return
           }
           addDeclared(port, baud)
+          publishMeta()
           sendJson(res, 200, snapshot(new Map()))
         }),
       },
@@ -604,6 +772,7 @@ export function apply(ctx, config = {}) {
           const capture = resolveCapture(key)
           if (capture !== undefined) removeDeclared(capture.port, capture.baud)
           else stopStream(key)
+          publishMeta()
           sendJson(res, 200, snapshot(new Map()))
         }),
       },
@@ -617,6 +786,7 @@ export function apply(ctx, config = {}) {
           manual = true
           clearAllRetries()
           stopAll()
+          publishMeta()
           sendJson(res, 200, snapshot(new Map()))
         }),
       },
@@ -629,6 +799,7 @@ export function apply(ctx, config = {}) {
           }
           manual = false
           openDeclared()
+          publishMeta()
           sendJson(res, 200, snapshot(new Map()))
         }),
       },

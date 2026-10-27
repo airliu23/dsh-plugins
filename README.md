@@ -35,7 +35,7 @@ plugin_manager { action: "install_bundle", target: "D:\\path\\to\\dsh-plugins\\p
 
 | 插件 | 一句话 | 细节 |
 |---|---|---|
-| [`serial-monitor`](plugins/serial-monitor/README.md) | 串口日志回显到右侧栏 tab；**端口由用户在面板开关，会话只能只读**（`status/read/wait/mark/ports`）；不探测波特率，支持多路 | [README](plugins/serial-monitor/README.md) · [INSTALL](plugins/serial-monitor/INSTALL.md) |
+| [`serial-monitor`](plugins/serial-monitor/README.md) | 串口日志回显到右侧栏 tab，**收到就推**（SSE，不轮询）；**端口由用户在面板开关，会话只能只读**（`status/read/wait/mark/ports`）；不探测波特率，支持多路 | [README](plugins/serial-monitor/README.md) · [INSTALL](plugins/serial-monitor/INSTALL.md) |
 
 ## 共同前置
 

@@ -84,18 +84,73 @@ window.__ModuleLoader__.load({
       ports: [],
       autoscroll: true,
       listeners: new Set(),
+      emitTimer: null,
       subscribe(listener) {
         this.listeners.add(listener)
         return () => this.listeners.delete(listener)
       },
       emit() {
+        if (this.emitTimer !== null) {
+          clearTimeout(this.emitTimer)
+          this.emitTimer = null
+        }
         for (const listener of [...this.listeners]) listener()
+      },
+      /**
+       * Pushed bytes arrive line by line; one repaint per animation frame keeps
+       * a chatty port at 9600 baud from re-rendering the pane dozens of times a
+       * second while still feeling immediate.
+       */
+      emitSoon() {
+        if (this.emitTimer !== null) return
+        this.emitTimer = setTimeout(() => {
+          this.emitTimer = null
+          this.emit()
+        }, 32)
+      },
+      /** One `data` event from the push stream: append the new text only. */
+      applyData(event) {
+        if (typeof event !== 'object' || event === null) return
+        if (typeof event.key !== 'string' || typeof event.text !== 'string') return
+        let stream = this.byKey.get(event.key)
+        if (stream === undefined) {
+          stream = { key: event.key, port: event.port, baud: event.baud, text: '', cursor: 0, total: 0, running: false, error: null }
+          this.byKey.set(event.key, stream)
+          this.streams.push(stream)
+        }
+        stream.text += event.text
+        if (stream.text.length > TEXT_LIMIT) stream.text = stream.text.slice(stream.text.length - TEXT_LIMIT)
+        if (typeof event.total === 'number') {
+          stream.total = event.total
+          stream.cursor = event.total
+        }
+        stream.error = null
+        this.emitSoon()
+      },
+      /** One `state` / `gone` event from the push stream. */
+      applyEvent(event) {
+        if (typeof event !== 'object' || event === null) return
+        if (event.gone === true) {
+          if (typeof event.key !== 'string') return
+          this.streams = this.streams.filter((stream) => stream.key !== event.key)
+          this.byKey.delete(event.key)
+          this.emit()
+          return
+        }
+        if (event.manual !== undefined || event.declared !== undefined) {
+          this.apply({ manual: event.manual, declared: event.declared })
+          return
+        }
+        if (typeof event.key === 'string') {
+          this.apply({ streams: [event] }, { removeMissing: false })
+        }
       },
       clearText() {
         for (const stream of this.streams) stream.text = ''
       },
-      apply(payload) {
+      apply(payload, options) {
         if (typeof payload !== 'object' || payload === null) return
+        const removeMissing = options?.removeMissing !== false
         // Every subscriber repaints on `emit()`, so it must fire exactly when
         // something visible changed — a cursor-only tick must stay silent.
         let changed = false
@@ -150,11 +205,11 @@ window.__ModuleLoader__.load({
           }
         }
         for (const stream of [...this.streams]) {
-          if (!seen.has(stream.key)) {
-            this.streams = this.streams.filter((entry) => entry !== stream)
-            this.byKey.delete(stream.key)
-            changed = true
-          }
+          if (seen.has(stream.key)) continue
+          if (!removeMissing) continue
+          this.streams = this.streams.filter((entry) => entry !== stream)
+          this.byKey.delete(stream.key)
+          changed = true
         }
         if (changed) this.emit()
       },
@@ -172,54 +227,130 @@ window.__ModuleLoader__.load({
 
     const describe = (error) => (error instanceof Error ? error.message : String(error))
 
-    // One shared poll loop, ref-counted by whichever seat is mounted.
-    let loopUsers = 0
-    let loopTimer = null
-    let loopInFlight = false
+    // --- push transport ------------------------------------------------------
+    // The Host pushes received bytes over SSE the moment the sidecar reports
+    // them; there is no data polling. `/poll` stays for two jobs only: the
+    // backfill after a (re)connect, using the cursors this store already holds,
+    // and a slow fallback when the event stream cannot be established at all.
+    let pushUsers = 0
+    let pushSource = null
+    let pushFailures = 0
+    let fallbackTimer = null
+    let fallbackBusy = false
 
     const sinceQuery = () =>
       store.streams
         .map((stream) => `${encodeURIComponent(stream.key)}:${stream.cursor}`)
         .join(',')
 
-    function scheduleLoop() {
-      if (loopUsers <= 0) return
-      const delay = store.streams.some((stream) => stream.running) ? 300 : 1200
-      loopTimer = setTimeout(() => {
-        loopTimer = null
-        void pollOnce()
+    async function backfill() {
+      if (fallbackBusy) return
+      fallbackBusy = true
+      try {
+        store.apply(await requestJson(`${API}/poll?since=${sinceQuery()}`))
+      } catch {
+        /* transient: the next backfill or the push stream covers the gap */
+      } finally {
+        fallbackBusy = false
+      }
+    }
+
+    function scheduleFallback() {
+      if (pushUsers <= 0 || fallbackTimer !== null) return
+      const delay = store.streams.some((stream) => stream.running) ? 1_500 : 3_000
+      fallbackTimer = setTimeout(() => {
+        fallbackTimer = null
+        void backfill().finally(() => scheduleFallback())
       }, delay)
     }
 
-    async function pollOnce() {
-      if (loopInFlight) return
-      loopInFlight = true
+    function stopFallback() {
+      if (fallbackTimer === null) return
+      clearTimeout(fallbackTimer)
+      fallbackTimer = null
+    }
+
+    const parseEvent = (event) => {
       try {
-        const payload = await requestJson(`${API}/poll?since=${sinceQuery()}`)
-        store.apply(payload)
+        return JSON.parse(event.data)
       } catch {
-        /* the next tick retries; a transient 401 during reload is expected */
-      } finally {
-        loopInFlight = false
-        if (loopTimer === null) scheduleLoop()
+        return null
       }
+    }
+
+    function openPush() {
+      if (pushSource !== null || pushUsers <= 0) return
+      if (typeof EventSource !== 'function') {
+        scheduleFallback()
+        return
+      }
+      let source
+      try {
+        source = new EventSource(`${API}/events`)
+      } catch {
+        scheduleFallback()
+        return
+      }
+      pushSource = source
+      source.addEventListener('open', () => {
+        pushFailures = 0
+        stopFallback()
+        void backfill()
+      })
+      source.addEventListener('snapshot', (event) => {
+        const payload = parseEvent(event)
+        if (payload !== null) store.apply(payload)
+        void backfill()
+      })
+      source.addEventListener('data', (event) => {
+        const payload = parseEvent(event)
+        if (payload !== null) store.applyData(payload)
+      })
+      source.addEventListener('state', (event) => {
+        const payload = parseEvent(event)
+        if (payload !== null) store.applyEvent(payload)
+      })
+      source.addEventListener('meta', (event) => {
+        const payload = parseEvent(event)
+        if (payload !== null) store.applyEvent(payload)
+      })
+      source.addEventListener('gone', (event) => {
+        const payload = parseEvent(event)
+        if (payload !== null) store.applyEvent({ ...payload, gone: true })
+      })
+      source.addEventListener('error', () => {
+        // EventSource retries on its own; keep a slow poll alive meanwhile so a
+        // blocked stream degrades to the old behaviour instead of freezing.
+        pushFailures += 1
+        if (pushFailures >= 3) scheduleFallback()
+      })
+    }
+
+    function closePush() {
+      if (pushSource !== null) {
+        const source = pushSource
+        pushSource = null
+        try {
+          source.close()
+        } catch {
+          /* already closed */
+        }
+      }
+      stopFallback()
     }
 
     function useSerial() {
       const [, bump] = React.useState(0)
       React.useEffect(() => {
         const off = store.subscribe(() => bump((value) => value + 1))
-        loopUsers += 1
-        if (loopTimer === null && !loopInFlight) void pollOnce()
+        pushUsers += 1
+        openPush()
         return () => {
           off()
-          loopUsers -= 1
-          if (loopUsers <= 0) {
-            loopUsers = 0
-            if (loopTimer !== null) {
-              clearTimeout(loopTimer)
-              loopTimer = null
-            }
+          pushUsers -= 1
+          if (pushUsers <= 0) {
+            pushUsers = 0
+            closePush()
           }
         }
       }, [])
@@ -638,16 +769,21 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'serial-monitor: dictionaries')
-        // Self-healing poll loop: a dropped tick must never freeze the panel,
-        // which would look like "the log only updates when I click something".
+        // Self-healing push stream: if the connection died without the browser
+        // retrying it (or a reconnect left us without a source), open it again.
+        // This is a liveness check on the transport, not a data poll.
         ctx.effect(
           () => {
             const guard = setInterval(() => {
-              if (loopUsers > 0 && loopTimer === null && !loopInFlight) void pollOnce()
-            }, 2_000)
+              if (pushUsers > 0 && pushSource === null) openPush()
+              else if (pushUsers > 0 && pushSource !== null && pushSource.readyState === 2) {
+                closePush()
+                openPush()
+              }
+            }, 5_000)
             return () => clearInterval(guard)
           },
-          'serial-monitor: poll watchdog',
+          'serial-monitor: push watchdog',
         )
         const bind = ctx.locale.bind(NS)
         const t = (key) => {
