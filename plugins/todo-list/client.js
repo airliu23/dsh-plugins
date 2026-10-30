@@ -123,7 +123,7 @@ window.__ModuleLoader__.load({
     // --- shortcut -----------------------------------------------------------
     function todoShortcut(event) {
       if (!(event.ctrlKey || event.metaKey) || event.altKey || !event.shiftKey) return false
-      return event.code === 'KeyT' || (event.key || '').toLowerCase() === 't'
+      return event.code === 'KeyD' || (event.key || '').toLowerCase() === 'd'
     }
 
     const shortcutLabel = (() => {
@@ -133,7 +133,7 @@ window.__ModuleLoader__.load({
       } catch {
         mac = false
       }
-      return mac ? '⌘⇧T' : 'Ctrl+Shift+T'
+      return mac ? '⌘⇧D' : 'Ctrl+Shift+D'
     })()
 
     // --- list state ---------------------------------------------------------
