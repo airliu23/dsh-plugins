@@ -120,6 +120,22 @@ window.__ModuleLoader__.load({
       return ui
     }
 
+    // --- shortcut -----------------------------------------------------------
+    function todoShortcut(event) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || !event.shiftKey) return false
+      return event.code === 'KeyT' || (event.key || '').toLowerCase() === 't'
+    }
+
+    const shortcutLabel = (() => {
+      let mac = false
+      try {
+        mac = /mac/i.test(navigator.platform || '') || /mac/i.test(navigator.userAgentData?.platform || '')
+      } catch {
+        mac = false
+      }
+      return mac ? '⌘⇧T' : 'Ctrl+Shift+T'
+    })()
+
     // --- list state ---------------------------------------------------------
     const store = {
       items: [],
@@ -297,6 +313,8 @@ window.__ModuleLoader__.load({
 .dsh-todo-submit { transition: box-shadow 160ms ease, filter 160ms ease; }
 .dsh-todo-submit:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 0 18px -4px var(--dsw-alias-brand-primary); }
 .dsh-todo-footer { display: flex; align-items: center; gap: 7px; border-top: 1px solid var(--dsw-alias-border-l1); padding: 8px 12px; font-size: 10.5px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
+.dsh-todo-footer-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dsh-todo-kbd { flex: 0 0 auto; padding: 3px 5px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 4px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9px; line-height: 1.2; letter-spacing: 0.02em; box-shadow: inset 0 -1px 0 var(--dsw-alias-border-l2); }
 .dsh-todo-footer-dot { width: 5px; height: 5px; border-radius: 50%; flex: 0 0 auto; background: var(--dsw-alias-brand-primary); box-shadow: 0 0 7px var(--dsw-alias-brand-primary); animation: dsh-todo-pulse 2.6s ease-in-out infinite alternate; }
 @media (prefers-reduced-motion: reduce) { .dsh-todo-float { animation: none; } .dsh-todo-footer-dot { animation: none; } .dsh-todo-float-row, .dsh-todo-check, .dsh-todo-add, .dsh-todo-submit, .dsh-todo-remove, .dsh-todo-progress > div { transition: none; } }
 `
@@ -427,7 +445,7 @@ window.__ModuleLoader__.load({
             onClick: () => ui.toggle(),
             'aria-label': translate('nav'),
             'aria-expanded': view.open,
-            title: view.open ? translate('closeHint') : translate('openHint'),
+            title: `${view.open ? translate('closeHint') : translate('openHint')} · ${shortcutLabel}`,
             className: 'dsh-todo-header-toggle',
             style: {
               display: 'inline-flex',
@@ -465,7 +483,7 @@ window.__ModuleLoader__.load({
             onClick: () => ui.toggle(),
             'aria-label': translate('nav'),
             'aria-expanded': view.open,
-            title: view.open ? translate('closeHint') : translate('openHint'),
+            title: `${view.open ? translate('closeHint') : translate('openHint')} · ${shortcutLabel}`,
             className: 'dsh-todo-launcher',
             style: {
               position: 'relative',
@@ -527,11 +545,10 @@ window.__ModuleLoader__.load({
 
     function defaultPosition() {
       const width = Math.min(PANEL_WIDTH, window.innerWidth - MARGIN * 2)
-      const height = Math.min(PANEL_HEIGHT, window.innerHeight - MARGIN * 2)
-      return {
+      return clampPosition({
         left: Math.max(MARGIN, window.innerWidth - width - 24),
-        top: Math.max(MARGIN, Math.round((window.innerHeight - height) / 2)),
-      }
+        top: Math.max(MARGIN, Math.round(window.innerHeight * 0.12)),
+      })
     }
 
     function makeFloatingPanel(bind) {
@@ -1076,7 +1093,11 @@ window.__ModuleLoader__.load({
           header,
           progressBar,
           h('div', { className: 'dsh-todo-float-body' }, addBar, filterBar, banner, h('div', { className: 'dsh-todo-float-list' }, listBody)),
-          h('div', { className: 'dsh-todo-footer' }, h('span', { className: 'dsh-todo-footer-dot', 'aria-hidden': true }), translate('hint')),
+          h('div', { className: 'dsh-todo-footer' },
+            h('span', { className: 'dsh-todo-footer-dot', 'aria-hidden': true }),
+            h('span', { className: 'dsh-todo-footer-text', title: translate('hint') }, translate('hint')),
+            h('kbd', { className: 'dsh-todo-kbd' }, shortcutLabel),
+          ),
         )
       }
     }
@@ -1084,6 +1105,17 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
+        ctx.effect(() => {
+          if (typeof window === 'undefined') return () => {}
+          const onKeyDown = (event) => {
+            if (event.defaultPrevented || event.repeat) return
+            if (!todoShortcut(event)) return
+            event.preventDefault()
+            ui.toggle()
+          }
+          window.addEventListener('keydown', onKeyDown)
+          return () => window.removeEventListener('keydown', onKeyDown)
+        }, 'todo-list: shortcut')
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'todo-list: dictionaries')
         const bind = ctx.locale.bind(NS)
         const t = (key) => {
