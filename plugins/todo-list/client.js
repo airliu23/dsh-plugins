@@ -44,7 +44,7 @@ window.__ModuleLoader__.load({
       loadFailed: '读不到待办数据，确认 Host 半已启用。',
       emptyDraft: '先写点什么再添加。',
       completedAt: '完成于 {date}',
-      hint: '与 AI 共用同一份清单：在会话里说「把 X 加到待办」，或让它调用 todo 工具。',
+      hint: '与 AI 共用一份清单：聊天里说「加到待办」即可。',
     }
 
     const en = {
@@ -71,7 +71,7 @@ window.__ModuleLoader__.load({
       loadFailed: 'Could not read the todo data. Is the Host half enabled?',
       emptyDraft: 'Write something before adding it.',
       completedAt: 'Done {date}',
-      hint: 'Shared with the agent: say "add X to my todos" in chat, or let it call the todo tool.',
+      hint: 'Shared with the agent — just say “add this to my todos”.',
     }
 
     const fill = (text, values) => text.replace(/\{(\w+)\}/g, (match, name) => (name in values ? String(values[name]) : match))
@@ -264,20 +264,35 @@ window.__ModuleLoader__.load({
     const subtle = { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }
 
     const CSS = `
-.dsh-todo-float { position: fixed; z-index: 40; width: min(400px, calc(100vw - 24px)); max-height: min(560px, calc(100vh - 96px)); display: flex; flex-direction: column; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; background: var(--dsw-alias-bg-overlay); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22); pointer-events: auto; overflow: hidden; }
-.dsh-todo-float-header { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1); cursor: grab; user-select: none; touch-action: none; }
+@keyframes dsh-todo-enter { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: none; } }
+.dsh-todo-float { position: fixed; z-index: 40; width: min(408px, calc(100vw - 24px)); max-height: min(580px, calc(100vh - 96px)); display: flex; flex-direction: column; border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px; background: var(--dsw-alias-bg-overlay); box-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.34), 0 2px 8px rgba(0, 0, 0, 0.08); pointer-events: auto; overflow: hidden; animation: dsh-todo-enter 160ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.dsh-todo-float-header { display: flex; align-items: center; gap: 9px; padding: 10px 10px 10px 11px; background: var(--dsw-alias-bg-layer-1); cursor: grab; user-select: none; touch-action: none; }
 .dsh-todo-float-header:active { cursor: grabbing; }
-.dsh-todo-float-body { display: flex; flex-direction: column; gap: 9px; padding: 11px 12px 12px; min-height: 0; flex: 1 1 auto; overflow: hidden; }
-.dsh-todo-float-list { display: flex; flex-direction: column; overflow: auto; min-height: 72px; flex: 1 1 auto; padding: 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 9px; background: var(--dsw-alias-bg-layer-1); }
-.dsh-todo-float-row { display: flex; align-items: flex-start; gap: 9px; padding: 8px 9px; border-radius: 7px; }
+.dsh-todo-float-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.dsh-todo-progress { height: 2px; background: var(--dsw-alias-bg-layer-2); flex: 0 0 auto; }
+.dsh-todo-progress > div { height: 100%; background: var(--dsw-alias-brand-primary); transition: width 220ms ease; }
+.dsh-todo-float-body { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-height: 0; flex: 1 1 auto; overflow: hidden; }
+.dsh-todo-float-list { display: flex; flex-direction: column; overflow: auto; min-height: 72px; flex: 1 1 auto; padding: 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); }
+.dsh-todo-float-list::-webkit-scrollbar { width: 10px; }
+.dsh-todo-float-list::-webkit-scrollbar-thumb { background: var(--dsw-alias-border-l2); border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
+.dsh-todo-float-list::-webkit-scrollbar-thumb:hover { background: var(--dsw-alias-label-secondary); border: 3px solid transparent; background-clip: padding-box; }
+.dsh-todo-float-row { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border-radius: 8px; transition: background 120ms ease; }
 .dsh-todo-float-row:hover { background: var(--dsw-alias-bg-layer-2); }
-.dsh-todo-float-row .dsh-todo-remove { opacity: 0; transition: opacity 120ms ease; }
+.dsh-todo-float-row .dsh-todo-remove { opacity: 0; transition: opacity 120ms ease, color 120ms ease; }
 .dsh-todo-float-row:hover .dsh-todo-remove, .dsh-todo-float-row:focus-within .dsh-todo-remove { opacity: 1; }
+.dsh-todo-empty { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 24px 12px 20px; text-align: center; }
+.dsh-todo-empty-badge { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); }
+.dsh-todo-check { transition: background 120ms ease, border-color 120ms ease, transform 120ms ease; }
+.dsh-todo-check:active { transform: scale(0.92); }
 .dsh-todo-add:focus-visible, .dsh-todo-edit:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
-.dsh-todo-close:hover { color: var(--dsw-alias-state-error-primary) !important; background: var(--dsw-alias-bg-layer-2) !important; }
+.dsh-todo-close { transition: background 120ms ease, color 120ms ease; }
+.dsh-todo-close:hover { color: var(--dsw-alias-label-primary) !important; background: var(--dsw-alias-bg-layer-2) !important; }
+.dsh-todo-remove:hover { color: var(--dsw-alias-state-error-primary) !important; background: var(--dsw-alias-bg-layer-1) !important; }
+.dsh-todo-launcher { transition: background 120ms ease, color 120ms ease; }
 .dsh-todo-launcher:hover { background: var(--dsw-alias-bg-layer-2) !important; color: var(--dsw-alias-label-primary) !important; }
 .dsh-todo-add:hover:not(:disabled) { filter: brightness(1.06); }
-@media (prefers-reduced-motion: reduce) { .dsh-todo-float-row .dsh-todo-remove { transition: none; } }
+.dsh-todo-footer { border-top: 1px solid var(--dsw-alias-border-l1); padding: 8px 12px; font-size: 10.5px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
+@media (prefers-reduced-motion: reduce) { .dsh-todo-float { animation: none; } .dsh-todo-float-row, .dsh-todo-check, .dsh-todo-add, .dsh-todo-remove, .dsh-todo-progress > div { transition: none; } }
 `
 
     // --- components --------------------------------------------------------
@@ -329,6 +344,33 @@ window.__ModuleLoader__.load({
           fill: 'none',
           stroke: 'var(--dsw-alias-bg-base)',
           strokeWidth: 2.2,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+        }),
+      )
+    }
+
+    function closeIcon() {
+      return h(
+        'svg',
+        { viewBox: '0 0 16 16', width: 13, height: 13, fill: 'none', 'aria-hidden': true, style: { display: 'block' } },
+        h('path', {
+          d: 'M3.8 3.8l8.4 8.4M12.2 3.8l-8.4 8.4',
+          stroke: 'currentColor',
+          strokeWidth: 1.5,
+          strokeLinecap: 'round',
+        }),
+      )
+    }
+
+    function trashIcon() {
+      return h(
+        'svg',
+        { viewBox: '0 0 16 16', width: 13, height: 13, fill: 'none', 'aria-hidden': true, style: { display: 'block' } },
+        h('path', {
+          d: 'M3 4.5h10M6.2 4.5V3h3.6v1.5M4.6 4.5l.6 8h5.6l.6-8',
+          stroke: 'currentColor',
+          strokeWidth: 1.3,
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
         }),
@@ -617,6 +659,8 @@ window.__ModuleLoader__.load({
           ['done', translate('done')],
         ]
 
+        const progress = counts.total === 0 ? 0 : Math.round((counts.done / counts.total) * 100)
+
         const header = h(
           'div',
           {
@@ -628,10 +672,47 @@ window.__ModuleLoader__.load({
           },
           gripIcon(),
           h(
+            'span',
+            {
+              style: {
+                width: 26,
+                height: 26,
+                borderRadius: 7,
+                border: '1px solid var(--dsw-alias-border-l1)',
+                background: 'var(--dsw-alias-bg-layer-2)',
+                color: 'var(--dsw-alias-brand-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flex: '0 0 auto',
+              },
+            },
+            h(TodoIcon, { size: 15 }),
+          ),
+          h(
             'div',
-            { style: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: '1 1 auto' } },
-            h('span', { style: { fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } }, translate('title')),
-            h('span', { style: { ...subtle, fontSize: 11 } }, fill(translate('count'), counts)),
+            { className: 'dsh-todo-float-title' },
+            h(
+              'span',
+              {
+                style: {
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  lineHeight: 1.3,
+                  letterSpacing: '-0.01em',
+                  color: 'var(--dsw-alias-label-primary)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                },
+              },
+              translate('title'),
+            ),
+            h(
+              'span',
+              { style: { ...subtle, fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } },
+              fill(translate('count'), counts),
+            ),
           ),
           h(
             'button',
@@ -647,17 +728,24 @@ window.__ModuleLoader__.load({
                 height: 26,
                 padding: 0,
                 border: 'none',
-                borderRadius: 6,
+                borderRadius: 7,
                 background: 'transparent',
                 color: 'var(--dsw-alias-label-secondary)',
-                fontSize: 17,
-                lineHeight: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 cursor: 'pointer',
                 flex: '0 0 auto',
               },
             },
-            '×',
+            closeIcon(),
           ),
+        )
+
+        const progressBar = h(
+          'div',
+          { className: 'dsh-todo-progress', 'aria-hidden': true },
+          h('div', { style: { width: `${progress}%` } }),
         )
 
         const addBar = h(
@@ -679,9 +767,9 @@ window.__ModuleLoader__.load({
             style: {
               flex: '1 1 auto',
               minWidth: 0,
-              height: 34,
-              padding: '0 10px',
-              borderRadius: 8,
+              height: 36,
+              padding: '0 11px',
+              borderRadius: 9,
               border: '1px solid var(--dsw-alias-border-l1)',
               background: 'var(--dsw-alias-bg-layer-1)',
               color: 'var(--dsw-alias-label-primary)',
@@ -696,19 +784,24 @@ window.__ModuleLoader__.load({
               onClick: () => void submitDraft(),
               disabled: busy || draft.trim() === '',
               style: {
-                height: 34,
+                height: 36,
                 padding: '0 14px',
-                borderRadius: 8,
+                borderRadius: 9,
                 border: '1px solid var(--dsw-alias-brand-primary)',
                 background: 'var(--dsw-alias-brand-primary)',
                 color: 'var(--dsw-alias-bg-base)',
                 fontSize: 12.5,
                 fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 5,
                 cursor: busy || draft.trim() === '' ? 'default' : 'pointer',
                 opacity: busy || draft.trim() === '' ? 0.5 : 1,
                 flex: '0 0 auto',
               },
             },
+            h('span', { style: { fontSize: 15, lineHeight: 1, fontWeight: 500, opacity: 0.95 } }, '+'),
             translate('add'),
           ),
         )
@@ -742,6 +835,7 @@ window.__ModuleLoader__.load({
                     borderRadius: 5,
                     border: '1px solid transparent',
                     background: filter === key ? 'var(--dsw-alias-bg-layer-1)' : 'transparent',
+                    boxShadow: filter === key ? '0 1px 2px rgba(0, 0, 0, 0.10)' : 'none',
                     color: filter === key ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
                     fontSize: 11,
                     fontWeight: filter === key ? 600 : 400,
@@ -808,6 +902,7 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
+                className: 'dsh-todo-check',
                 role: 'checkbox',
                 'aria-checked': item.done,
                 'aria-label': item.text,
@@ -849,13 +944,13 @@ window.__ModuleLoader__.load({
                   style: {
                     flex: '1 1 auto',
                     minWidth: 0,
-                    height: 24,
-                    padding: '0 7px',
-                    borderRadius: 5,
+                    height: 26,
+                    padding: '0 8px',
+                    borderRadius: 6,
                     border: '1px solid var(--dsw-alias-border-l1)',
                     background: 'var(--dsw-alias-bg-base)',
                     color: 'var(--dsw-alias-label-primary)',
-                    fontSize: 12.5,
+                    fontSize: 13,
                     boxSizing: 'border-box',
                   },
                 })
@@ -868,7 +963,7 @@ window.__ModuleLoader__.load({
                       onDoubleClick: () => startEdit(item),
                       title: translate('editHint'),
                       style: {
-                        fontSize: 12.5,
+                        fontSize: 13,
                         lineHeight: 1.5,
                         color: item.done ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-primary)',
                         textDecoration: item.done ? 'line-through' : 'none',
@@ -903,23 +998,47 @@ window.__ModuleLoader__.load({
                   borderRadius: 5,
                   background: 'transparent',
                   color: 'var(--dsw-alias-label-secondary)',
-                  fontSize: 15,
-                  lineHeight: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   cursor: 'pointer',
                   flex: '0 0 auto',
                 },
               },
-              '×',
+              trashIcon(),
             ),
           )
         })
 
         const emptyKey = filter === 'done' ? 'emptyDone' : filter === 'active' ? 'emptyActive' : 'emptyAll'
 
+        const emptyState = (text) =>
+          h(
+            'div',
+            { className: 'dsh-todo-empty' },
+            h('span', { className: 'dsh-todo-empty-badge' }, h(TodoIcon, { size: 18 })),
+            h(
+              'span',
+              {
+                style: {
+                  fontSize: 11.5,
+                  lineHeight: 1.6,
+                  maxWidth: 230,
+                  color: 'var(--dsw-alias-label-secondary)',
+                },
+              },
+              text,
+            ),
+          )
+
         const listBody = !state.loaded
-          ? h('div', { style: { ...subtle, padding: '16px 10px' } }, state.error !== null ? translate('loadFailed') : translate('loading'))
+          ? h(
+              'div',
+              { className: 'dsh-todo-empty' },
+              h('span', { style: { ...subtle, fontSize: 11.5 } }, state.error !== null ? translate('loadFailed') : translate('loading')),
+            )
           : rows.length === 0
-            ? h('div', { style: { ...subtle, padding: '18px 10px', textAlign: 'center' } }, translate(emptyKey))
+            ? emptyState(translate(emptyKey))
             : rows
 
         return h(
@@ -927,8 +1046,9 @@ window.__ModuleLoader__.load({
           { className: 'dsh-todo-float', style: { left: position.left, top: position.top }, role: 'dialog', 'aria-label': translate('title') },
           h('style', null, CSS),
           header,
+          progressBar,
           h('div', { className: 'dsh-todo-float-body' }, addBar, filterBar, banner, h('div', { className: 'dsh-todo-float-list' }, listBody)),
-          h('div', { style: { ...subtle, fontSize: 10.5, lineHeight: 1.5, padding: '0 12px 10px' } }, translate('hint')),
+          h('div', { className: 'dsh-todo-footer' }, translate('hint')),
         )
       }
     }
