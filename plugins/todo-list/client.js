@@ -1,10 +1,11 @@
 /**
  * Client half of the todo-list bundle.
  *
- * One data source (the Host's `/plugins/todo-list` routes), three seats:
+ * One data source (the Host's `/plugins/todo-list` routes), four seats:
  *   conversation.session.header.utilities → 「待办」toggle in the session header
- *   sidebar.footer.action                 → the same toggle beside Settings
- *   shell.overlay                         → the floating panel those toggles open
+ *   sidebar.panellist                      → the rail icon below 「自动化」
+ *   main (key todo-list)                   → bridge: opens the float, restores the conversation
+ *   shell.overlay                          → the floating panel / Ctrl+Shift+D
  *
  * The panel floats over the app without taking the conversation away: it is
  * draggable by its header, closable with × or Escape, and its position is kept
@@ -308,8 +309,6 @@ window.__ModuleLoader__.load({
 .dsh-todo-close { transition: background 120ms ease, color 120ms ease; }
 .dsh-todo-close:hover { color: var(--dsw-alias-label-primary) !important; background: var(--dsw-alias-bg-layer-2) !important; }
 .dsh-todo-remove:hover { color: var(--dsw-alias-state-error-primary) !important; background: var(--dsw-alias-bg-layer-1) !important; }
-.dsh-todo-launcher { transition: background 120ms ease, color 120ms ease; }
-.dsh-todo-launcher:hover { background: var(--dsw-alias-bg-layer-2) !important; color: var(--dsw-alias-label-primary) !important; }
 .dsh-todo-submit { transition: box-shadow 160ms ease, filter 160ms ease; }
 .dsh-todo-submit:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 0 18px -4px var(--dsw-alias-brand-primary); }
 .dsh-todo-footer { display: flex; align-items: center; gap: 7px; border-top: 1px solid var(--dsw-alias-border-l1); padding: 8px 12px; font-size: 10.5px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
@@ -469,64 +468,44 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function makeFooterToggle(bind) {
-      const pick = makeTranslator(bind)
-      return function TodoFooterToggle(props) {
-        const translate = pick(props)
-        const state = useTodos()
-        const view = useUi()
-        const active = state.counts?.active ?? 0
-        return h(
-          'button',
-          {
-            type: 'button',
-            onClick: () => ui.toggle(),
-            'aria-label': translate('nav'),
-            'aria-expanded': view.open,
-            title: `${view.open ? translate('closeHint') : translate('openHint')} · ${shortcutLabel}`,
-            className: 'dsh-todo-launcher',
-            style: {
-              position: 'relative',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 32,
-              height: 32,
-              padding: 0,
-              border: '1px solid transparent',
-              borderRadius: 8,
-              background: view.open ? 'var(--dsw-alias-bg-layer-2)' : 'transparent',
-              boxShadow: view.open ? '0 0 12px -4px var(--dsw-alias-brand-primary)' : 'none',
-              color: view.open ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
-              cursor: 'pointer',
-            },
-          },
-          h(TodoIcon, { size: 18 }),
-          active > 0
-            ? h(
-                'span',
-                {
-                  style: {
-                    position: 'absolute',
-                    top: -2,
-                    right: -2,
-                    minWidth: 14,
-                    height: 14,
-                    padding: '0 3px',
-                    borderRadius: 7,
-                    background: 'var(--dsw-alias-brand-primary)',
-                    color: 'var(--dsw-alias-bg-base)',
-                    fontSize: 9,
-                    lineHeight: '14px',
-                    fontWeight: 600,
-                    textAlign: 'center',
-                    boxSizing: 'border-box',
-                  },
-                },
-                active > 99 ? '99+' : String(active),
-              )
-            : null,
-        )
+    /** The left-rail icon. Clicking it selects the matching `main` key, whose
+     *  bridge opens the floating window and immediately restores the panel. */
+    function TodoPanelIcon(props) {
+      const view = useUi()
+      const size = Number.isFinite(props?.size) ? props.size : 18
+      return h(
+        'span',
+        { style: { position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' } },
+        h(TodoIcon, { size }),
+        view.open
+          ? h('span', {
+              style: {
+                position: 'absolute',
+                top: 0,
+                right: -1,
+                width: 4,
+                height: 4,
+                borderRadius: '50%',
+                background: 'var(--dsw-alias-brand-primary)',
+                boxShadow: '0 0 6px var(--dsw-alias-brand-primary)',
+              },
+            })
+          : null,
+      )
+    }
+
+    /** The `main` entry exists only so the rail's selection succeeds; it opens
+     *  the floating window and hands the center column back to the conversation. */
+    function makeBridgePanel(layout) {
+      return function TodoBridgePanel() {
+        const handled = React.useRef(false)
+        React.useLayoutEffect(() => {
+          if (handled.current) return
+          handled.current = true
+          ui.toggle()
+          layout.selectPanel(null)
+        }, [])
+        return null
       }
     }
 
@@ -1103,7 +1082,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'layout'],
       apply(ctx) {
         ctx.effect(() => {
           if (typeof window === 'undefined') return () => {}
@@ -1133,11 +1112,14 @@ window.__ModuleLoader__.load({
             makeHeaderToggle(bind),
           ),
         )
-        ctx.slots.inject('sidebar.footer.action', () =>
+        ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register(
-            { name: 'sidebar.footer.action', id: 'todo-list-toggle', order: 20, label: () => t('nav'), locale: NS },
-            makeFooterToggle(bind),
+            { name: 'sidebar.panellist', id: 'todo-list', order: 20, label: () => t('nav'), locale: NS },
+            TodoPanelIcon,
           ),
+        )
+        ctx.slots.inject('main', () =>
+          ctx.slots.register({ name: 'main', key: 'todo-list', locale: NS }, makeBridgePanel(ctx.layout)),
         )
         ctx.slots.inject('shell.overlay', () =>
           ctx.slots.register(

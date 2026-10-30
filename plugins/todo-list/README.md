@@ -1,8 +1,8 @@
 # @local/todo-list
 
-DSH Web GUI 的个人待办清单插件。会话标题栏或左侧栏底部的「待办」按钮 → **悬浮小窗**：浮在页面上，聊天仍在下面；拖动标题移动，`×`、`Esc` 或 `Ctrl+Shift+D`（Mac `⌘⇧D`）收起。手动添加、勾选、双击改名、删除、清除已完成。**会话通过 `todo` 工具读写同一份清单**，所以「把这件事记一下」既能在浮窗里做，也能在聊天里说。
+DSH Web GUI 的个人待办清单插件。会话标题栏的「待办」按钮，或左侧栏「自动化」下方的待办图标 → **悬浮小窗**：浮在页面上，聊天仍在下面；拖动标题移动，`×`、`Esc` 或 `Ctrl+Shift+D`（Mac `⌘⇧D`）收起。手动添加、勾选、双击改名、删除、清除已完成。**会话通过 `todo` 工具读写同一份清单**，所以「把这件事记一下」既能在浮窗里做，也能在聊天里说。
 
-> 座位：`conversation.session.header.utilities` + `sidebar.footer.action`（两个入口，同一个开关）+ `shell.overlay`（浮窗本体，id = `todo-list-float`）。不占主区域、不抢右侧栏 tab；切换会话或面板时浮窗留在原位。
+> 座位：`conversation.session.header.utilities`（标题栏入口）+ `sidebar.panellist`（左侧栏图标，`order: 20`，在「自动化」下面）+ 配对的 `main`（key `todo-list`，只做转场：打开浮窗后立刻把中央栏还给会话）+ `shell.overlay`（浮窗本体，id = `todo-list-float`）。不占主区域、不抢右侧栏 tab；切换会话或面板时浮窗留在原位。
 
 ## 和 `todo_write` 的区别
 
@@ -26,7 +26,7 @@ DSH Web GUI 的个人待办清单插件。会话标题栏或左侧栏底部的�
 
 ## 浮窗
 
-- 两个入口：会话标题栏的「待办」按钮，以及左侧栏底部 Settings 旁的勾选图标；两处都带未完成数徽标。点一次打开，再点收起。
+- 两个入口：会话标题栏的「待办」按钮，以及左侧栏「自动化」下面的待办图标（打开时图标上带一个品牌色小点）；两处对应同一个浮窗。左侧栏图标点一下打开，再点收起，中央栏仍停在会话。
 - 快捷键：`Ctrl+Shift+D`（Mac `⌘⇧D`，D = 待办）打开/收起；浮窗底部右侧也会显示这个键位。
 - 浮窗：拖标题栏移动，`×` / `Esc` 收起；位置在当前页面会话内记住，刷新页面后回到默认位置（右上方，垂直约 12% 处）。
 - 外观：科技感 HUD 风格——12px 圆角卡片、品牌光晕、顶部光带和底部网格纹理；头部是切角图标、标题/等宽统计和带辉光的完成进度条；行 hover 有品牌色侧标、方形勾选框完成时发光、空状态是发光图标；底部有脉冲状态点；打开时轻微淡入（`prefers-reduced-motion` 下关闭）。
@@ -59,7 +59,7 @@ todo { action: "done", id: "2" }
 |---|---|
 | `index.js` | Host 半：路径解析、7 条 HTTP 路由（`state/events/add/toggle/update/remove/clear-done`）、`todo` 工具、系统提示一节 |
 | `store.js` | 清单本体：加载/校验/落盘/变更通知。不依赖 Cordis，测试直接驱动它 |
-| `client.js` | Client 半：会话标题栏 / 左侧栏两个开关 + 可拖动浮窗、SSE 订阅、行内编辑 |
+| `client.js` | Client 半：标题栏开关 + 左侧栏图标（含打开态小点）+ `main` 转场桥 + 可拖动浮窗、SSE 订阅、行内编辑 |
 | `cordis.patch.yml` | 插入 `todo-list` 行 + 默认配置 |
 | `test/store.mjs` | Host 存储回归测试（无浏览器、无服务） |
 | `test/host-routes.mjs` | Host 接线测试：用最小 ctx 桩驱动 7 条路由 + `todo` 工具 |
@@ -89,8 +89,8 @@ plugin_manager { action: "install_bundle", target: "D:\\wireless\\dsh-plugins\\p
 ## 验证
 
 1. `plugin_manager { action: "list_plugins" }` 能看到 `@local/todo-list`（行 id `include:todo-list`），状态启用。
-2. 刷新页面：会话标题栏出现「待办」按钮，左侧栏底部 Settings 旁出现勾选图标。
-3. 点任一个 → 浮窗弹出（默认右上方），聊天仍可见；拖标题移动、点 `×` 或按 `Esc` 收起；`Ctrl+Shift+D` 也能开关。
+2. 刷新页面：会话标题栏出现「待办」按钮，左侧栏「自动化」下面出现待办图标。
+3. 点任一个 → 浮窗弹出（默认右上方），中央栏仍停在会话；拖标题移动、点 `×` 或按 `Esc` 收起；`Ctrl+Shift+D` 也能开关。
 4. 输入一条并回车 → 立刻出现在列表里；勾选 → 划线并计入「已完成」；双击改名；`×` 删除。
 5. 让会话 `todo { action: "add", text: "..." }` → 开着浮窗不用刷新就多一条，入口徽标同步 +1。
 6. 重启 DSH → 清单还在（数据在 `todos.json`）。
