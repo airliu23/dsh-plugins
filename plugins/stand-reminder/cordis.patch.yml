@@ -1,0 +1,15 @@
+- insert:
+    - id: stand-reminder
+      name: '@local/stand-reminder'
+      config:
+        # Empty = <DSH_HOME>/stand-reminder/state.json. A relative path resolves
+        # against DSH_HOME, an absolute path is used as-is.
+        file: ''
+        # Seed only: settings changed in the window are saved to state.json and
+        # win from then on. Delete the file to fall back to these defaults.
+        enabled: true
+        intervalMinutes: 60
+        breakSeconds: 120
+        snoozeMinutes: 10
+        sound: true
+        notify: false

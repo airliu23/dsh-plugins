@@ -18,6 +18,16 @@ dsh-plugins/
 │   │   ├── test/                #   无浏览器回归测试（相对路径，可直接跑）
 │   │   ├── README.md            #   设计、接口、已知边界
 │   │   └── INSTALL.md           #   安装 / 分发步骤
+│   ├── stand-reminder/          # 久坐提醒：每小时弹窗让你站起来
+│   │   ├── index.js             #   Host 半：调度 + 路由 + stand_reminder 工具
+│   │   ├── store.js             #   日程与设置（落盘 / 状态迁移）
+│   │   ├── client.js            #   Client 半：标题栏倒计时 + 四个窗口面 + SSE
+│   │   ├── cordis.patch.yml
+│   │   ├── package.json
+│   │   ├── test/store.mjs
+│   │   ├── test/host-routes.mjs
+│   │   ├── test/client-window.mjs
+│   │   └── README.md
 │   └── todo-list/               # 待办清单：悬浮小窗（标题栏 / 左侧栏图标）
 │       ├── index.js             #   Host 半：路由 + todo 工具
 │       ├── store.js             #   清单本体（落盘 / 通知）
@@ -46,6 +56,7 @@ plugin_manager { action: "install_bundle", target: "D:\\path\\to\\dsh-plugins\\p
 |---|---|---|
 | [`serial-monitor`](plugins/serial-monitor/README.md) | 串口日志回显到右侧栏 tab，**收到就推**（SSE，不轮询）；**端口由用户在面板开关，会话只能只读**（`status/read/wait/mark/ports`）；不探测波特率，支持多路 | [README](plugins/serial-monitor/README.md) · [INSTALL](plugins/serial-monitor/INSTALL.md) |
 | [`todo-list`](plugins/todo-list/README.md) | 悬浮待办小窗：会话标题栏按钮 / 左侧栏「自动化」下方图标（`Ctrl+Shift+D`），浮在页面上不抢走聊天；可拖动、可收起、本地落盘、SSE 实时同步；会话用 `todo` 工具读写同一份数据（与 `todo_write` 计划分开） | [README](plugins/todo-list/README.md) |
+| [`stand-reminder`](plugins/stand-reminder/README.md) | 久坐提醒：默认每 60 分钟弹一次窗，提醒你站起来；「我站起来了」进入 2 分钟环形休息倒计时，可稍后/跳过；标题栏常驻倒计时；时间由 Host 记在本地文件，刷新页面不重置，关掉页面则不提醒；会话可用 `stand_reminder` 工具查看与微调 | [README](plugins/stand-reminder/README.md) |
 
 ## 共同前置
 

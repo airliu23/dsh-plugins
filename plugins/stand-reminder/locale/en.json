@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Stand-up reminder",
+    "description": "Pops up a “time to stand” window every hour: take a two-minute standing break with a countdown, snooze it, skip it, or change the interval and chime. Settings and schedule stay on this machine."
+  }
+}
