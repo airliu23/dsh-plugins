@@ -18,10 +18,10 @@ dsh-plugins/
 │   │   ├── test/                #   无浏览器回归测试（相对路径，可直接跑）
 │   │   ├── README.md            #   设计、接口、已知边界
 │   │   └── INSTALL.md           #   安装 / 分发步骤
-│   └── todo-list/               # 待办清单：左侧栏图标 + 整页面板
+│   └── todo-list/               # 待办清单：悬浮小窗（标题栏/侧栏底部开关）
 │       ├── index.js             #   Host 半：路由 + todo 工具
 │       ├── store.js             #   清单本体（落盘 / 通知）
-│       ├── client.js            #   Client 半：面板 + SSE 订阅
+│       ├── client.js            #   Client 半：开关 + 可拖动浮窗 + SSE 订阅
 │       ├── cordis.patch.yml
 │       ├── package.json
 │       ├── test/store.mjs       #   存储层回归测试
@@ -45,7 +45,7 @@ plugin_manager { action: "install_bundle", target: "D:\\path\\to\\dsh-plugins\\p
 | 插件 | 一句话 | 细节 |
 |---|---|---|
 | [`serial-monitor`](plugins/serial-monitor/README.md) | 串口日志回显到右侧栏 tab，**收到就推**（SSE，不轮询）；**端口由用户在面板开关，会话只能只读**（`status/read/wait/mark/ports`）；不探测波特率，支持多路 | [README](plugins/serial-monitor/README.md) · [INSTALL](plugins/serial-monitor/INSTALL.md) |
-| [`todo-list`](plugins/todo-list/README.md) | 左侧栏「待办」整页清单：增删改勾选、本地落盘、SSE 实时同步；会话用 `todo` 工具读写同一份数据（与 `todo_write` 计划分开） | [README](plugins/todo-list/README.md) |
+| [`todo-list`](plugins/todo-list/README.md) | 悬浮待办小窗：会话标题栏 / 左侧栏底部开关，浮在页面上不抢走聊天；可拖动、可收起、本地落盘、SSE 实时同步；会话用 `todo` 工具读写同一份数据（与 `todo_write` 计划分开） | [README](plugins/todo-list/README.md) |
 
 ## 共同前置
 
