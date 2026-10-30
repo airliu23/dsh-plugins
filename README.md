@@ -9,15 +9,24 @@
 ```
 dsh-plugins/
 ├── plugins/
-│   └── serial-monitor/          # 串口监视：右侧栏 tab + 只读工具
-│       ├── index.js             #   Host 半
-│       ├── client.js            #   Client 半（浏览器）
-│       ├── serial_sidecar.py    #   pyserial 子进程
-│       ├── cordis.patch.yml     #   bundle 自带的插件行 + 默认配置
+│   ├── serial-monitor/          # 串口监视：右侧栏 tab + 只读工具
+│   │   ├── index.js             #   Host 半
+│   │   ├── client.js            #   Client 半（浏览器）
+│   │   ├── serial_sidecar.py    #   pyserial 子进程
+│   │   ├── cordis.patch.yml     #   bundle 自带的插件行 + 默认配置
+│   │   ├── package.json
+│   │   ├── test/                #   无浏览器回归测试（相对路径，可直接跑）
+│   │   ├── README.md            #   设计、接口、已知边界
+│   │   └── INSTALL.md           #   安装 / 分发步骤
+│   └── todo-list/               # 待办清单：左侧栏图标 + 整页面板
+│       ├── index.js             #   Host 半：路由 + todo 工具
+│       ├── store.js             #   清单本体（落盘 / 通知）
+│       ├── client.js            #   Client 半：面板 + SSE 订阅
+│       ├── cordis.patch.yml
 │       ├── package.json
-│       ├── test/                #   无浏览器回归测试（相对路径，可直接跑）
-│       ├── README.md            #   设计、接口、已知边界
-│       └── INSTALL.md           #   安装 / 分发步骤
+│       ├── test/store.mjs       #   存储层回归测试
+│       ├── test/host-routes.mjs #   路由 + 工具接线测试
+│       └── README.md
 └── README.md
 ```
 
@@ -36,6 +45,7 @@ plugin_manager { action: "install_bundle", target: "D:\\path\\to\\dsh-plugins\\p
 | 插件 | 一句话 | 细节 |
 |---|---|---|
 | [`serial-monitor`](plugins/serial-monitor/README.md) | 串口日志回显到右侧栏 tab，**收到就推**（SSE，不轮询）；**端口由用户在面板开关，会话只能只读**（`status/read/wait/mark/ports`）；不探测波特率，支持多路 | [README](plugins/serial-monitor/README.md) · [INSTALL](plugins/serial-monitor/INSTALL.md) |
+| [`todo-list`](plugins/todo-list/README.md) | 左侧栏「待办」整页清单：增删改勾选、本地落盘、SSE 实时同步；会话用 `todo` 工具读写同一份数据（与 `todo_write` 计划分开） | [README](plugins/todo-list/README.md) |
 
 ## 共同前置
 

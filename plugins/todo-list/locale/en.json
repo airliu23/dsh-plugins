@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Todo List",
+    "description": "A personal todo list in its own sidebar panel: add, check off, edit and delete by hand, stored locally. The agent reads and writes the same list through the todo tool, separate from its todo_write plan."
+  }
+}

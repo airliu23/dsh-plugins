@@ -1,0 +1,8 @@
+- insert:
+    - id: todo-list
+      name: '@local/todo-list'
+      config:
+        # Empty = <DSH_HOME>/todo-list/todos.json. A relative path resolves
+        # against DSH_HOME, an absolute path is used as-is.
+        file: ''
+        maxItems: 500
