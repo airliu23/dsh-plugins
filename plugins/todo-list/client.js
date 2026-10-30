@@ -265,34 +265,40 @@ window.__ModuleLoader__.load({
 
     const CSS = `
 @keyframes dsh-todo-enter { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: none; } }
-.dsh-todo-float { position: fixed; z-index: 40; width: min(408px, calc(100vw - 24px)); max-height: min(580px, calc(100vh - 96px)); display: flex; flex-direction: column; border: 1px solid var(--dsw-alias-border-l2); border-radius: 14px; background: var(--dsw-alias-bg-overlay); box-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.34), 0 2px 8px rgba(0, 0, 0, 0.08); pointer-events: auto; overflow: hidden; animation: dsh-todo-enter 160ms cubic-bezier(0.2, 0.8, 0.2, 1); }
-.dsh-todo-float-header { display: flex; align-items: center; gap: 9px; padding: 10px 10px 10px 11px; background: var(--dsw-alias-bg-layer-1); cursor: grab; user-select: none; touch-action: none; }
+@keyframes dsh-todo-pulse { from { opacity: 0.45; } to { opacity: 1; } }
+.dsh-todo-float { position: fixed; z-index: 40; width: min(408px, calc(100vw - 24px)); max-height: min(580px, calc(100vh - 96px)); display: flex; flex-direction: column; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px; background: var(--dsw-alias-bg-overlay); box-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.34), 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 42px -18px var(--dsw-alias-brand-primary); pointer-events: auto; overflow: hidden; animation: dsh-todo-enter 160ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.dsh-todo-float::before { content: ''; position: absolute; top: 0; left: 12%; right: 12%; height: 1px; background: linear-gradient(90deg, transparent, var(--dsw-alias-brand-primary), transparent); opacity: 0.6; pointer-events: none; z-index: 2; }
+.dsh-todo-float-header { display: flex; align-items: center; gap: 9px; padding: 10px 10px 10px 11px; background: linear-gradient(180deg, var(--dsw-alias-bg-layer-1), var(--dsw-alias-bg-overlay)); cursor: grab; user-select: none; touch-action: none; }
 .dsh-todo-float-header:active { cursor: grabbing; }
 .dsh-todo-float-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
 .dsh-todo-progress { height: 2px; background: var(--dsw-alias-bg-layer-2); flex: 0 0 auto; }
 .dsh-todo-progress > div { height: 100%; background: var(--dsw-alias-brand-primary); transition: width 220ms ease; }
-.dsh-todo-float-body { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-height: 0; flex: 1 1 auto; overflow: hidden; }
-.dsh-todo-float-list { display: flex; flex-direction: column; overflow: auto; min-height: 72px; flex: 1 1 auto; padding: 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); }
+.dsh-todo-float-body { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-height: 0; flex: 1 1 auto; overflow: hidden; background-image: linear-gradient(rgba(127, 127, 127, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(127, 127, 127, 0.05) 1px, transparent 1px); background-size: 26px 26px; }
+.dsh-todo-float-list { display: flex; flex-direction: column; overflow: auto; min-height: 72px; flex: 1 1 auto; padding: 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; background: var(--dsw-alias-bg-layer-1); box-shadow: inset 0 1px 0 rgba(127, 127, 127, 0.06); }
 .dsh-todo-float-list::-webkit-scrollbar { width: 10px; }
 .dsh-todo-float-list::-webkit-scrollbar-thumb { background: var(--dsw-alias-border-l2); border-radius: 5px; border: 3px solid transparent; background-clip: padding-box; }
 .dsh-todo-float-list::-webkit-scrollbar-thumb:hover { background: var(--dsw-alias-label-secondary); border: 3px solid transparent; background-clip: padding-box; }
-.dsh-todo-float-row { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border-radius: 8px; transition: background 120ms ease; }
-.dsh-todo-float-row:hover { background: var(--dsw-alias-bg-layer-2); }
+.dsh-todo-float-row { display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px; border-radius: 7px; transition: background 120ms ease, box-shadow 120ms ease; }
+.dsh-todo-float-row:hover { background: var(--dsw-alias-bg-layer-2); box-shadow: inset 2px 0 0 var(--dsw-alias-brand-primary); }
 .dsh-todo-float-row .dsh-todo-remove { opacity: 0; transition: opacity 120ms ease, color 120ms ease; }
 .dsh-todo-float-row:hover .dsh-todo-remove, .dsh-todo-float-row:focus-within .dsh-todo-remove { opacity: 1; }
 .dsh-todo-empty { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 24px 12px 20px; text-align: center; }
-.dsh-todo-empty-badge { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); }
-.dsh-todo-check { transition: background 120ms ease, border-color 120ms ease, transform 120ms ease; }
+.dsh-todo-empty-badge { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--dsw-alias-border-l1); display: flex; align-items: center; justify-content: center; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-brand-primary); box-shadow: 0 0 20px -8px var(--dsw-alias-brand-primary); }
+.dsh-todo-check { transition: background 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 160ms ease; }
 .dsh-todo-check:active { transform: scale(0.92); }
-.dsh-todo-add:focus-visible, .dsh-todo-edit:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.dsh-todo-check:hover { border-color: var(--dsw-alias-brand-primary) !important; }
+.dsh-todo-check.is-done { box-shadow: 0 0 10px -1px var(--dsw-alias-brand-primary); }
+.dsh-todo-add:focus, .dsh-todo-edit:focus { outline: none; border-color: var(--dsw-alias-brand-primary) !important; box-shadow: 0 0 0 1px var(--dsw-alias-brand-primary), 0 0 14px -2px var(--dsw-alias-brand-primary); }
 .dsh-todo-close { transition: background 120ms ease, color 120ms ease; }
 .dsh-todo-close:hover { color: var(--dsw-alias-label-primary) !important; background: var(--dsw-alias-bg-layer-2) !important; }
 .dsh-todo-remove:hover { color: var(--dsw-alias-state-error-primary) !important; background: var(--dsw-alias-bg-layer-1) !important; }
 .dsh-todo-launcher { transition: background 120ms ease, color 120ms ease; }
 .dsh-todo-launcher:hover { background: var(--dsw-alias-bg-layer-2) !important; color: var(--dsw-alias-label-primary) !important; }
-.dsh-todo-add:hover:not(:disabled) { filter: brightness(1.06); }
-.dsh-todo-footer { border-top: 1px solid var(--dsw-alias-border-l1); padding: 8px 12px; font-size: 10.5px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
-@media (prefers-reduced-motion: reduce) { .dsh-todo-float { animation: none; } .dsh-todo-float-row, .dsh-todo-check, .dsh-todo-add, .dsh-todo-remove, .dsh-todo-progress > div { transition: none; } }
+.dsh-todo-submit { transition: box-shadow 160ms ease, filter 160ms ease; }
+.dsh-todo-submit:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 0 18px -4px var(--dsw-alias-brand-primary); }
+.dsh-todo-footer { display: flex; align-items: center; gap: 7px; border-top: 1px solid var(--dsw-alias-border-l1); padding: 8px 12px; font-size: 10.5px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
+.dsh-todo-footer-dot { width: 5px; height: 5px; border-radius: 50%; flex: 0 0 auto; background: var(--dsw-alias-brand-primary); box-shadow: 0 0 7px var(--dsw-alias-brand-primary); animation: dsh-todo-pulse 2.6s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) { .dsh-todo-float { animation: none; } .dsh-todo-footer-dot { animation: none; } .dsh-todo-float-row, .dsh-todo-check, .dsh-todo-add, .dsh-todo-submit, .dsh-todo-remove, .dsh-todo-progress > div { transition: none; } }
 `
 
     // --- components --------------------------------------------------------
@@ -432,6 +438,7 @@ window.__ModuleLoader__.load({
               borderRadius: 6,
               border: `1px solid ${view.open ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l1)'}`,
               background: view.open ? 'var(--dsw-alias-bg-layer-2)' : 'transparent',
+              boxShadow: view.open ? '0 0 12px -4px var(--dsw-alias-brand-primary)' : 'none',
               color: 'var(--dsw-alias-label-primary)',
               fontSize: 12,
               cursor: 'pointer',
@@ -471,6 +478,7 @@ window.__ModuleLoader__.load({
               border: '1px solid transparent',
               borderRadius: 8,
               background: view.open ? 'var(--dsw-alias-bg-layer-2)' : 'transparent',
+              boxShadow: view.open ? '0 0 12px -4px var(--dsw-alias-brand-primary)' : 'none',
               color: view.open ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
               cursor: 'pointer',
             },
@@ -504,8 +512,8 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const PANEL_WIDTH = 400
-    const PANEL_HEIGHT = 560
+    const PANEL_WIDTH = 408
+    const PANEL_HEIGHT = 580
     const MARGIN = 8
 
     function clampPosition(position) {
@@ -677,10 +685,12 @@ window.__ModuleLoader__.load({
               style: {
                 width: 26,
                 height: 26,
-                borderRadius: 7,
+                borderRadius: 6,
                 border: '1px solid var(--dsw-alias-border-l1)',
+                borderLeft: '2px solid var(--dsw-alias-brand-primary)',
                 background: 'var(--dsw-alias-bg-layer-2)',
                 color: 'var(--dsw-alias-brand-primary)',
+                boxShadow: '0 0 16px -8px var(--dsw-alias-brand-primary)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -710,7 +720,18 @@ window.__ModuleLoader__.load({
             ),
             h(
               'span',
-              { style: { ...subtle, fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } },
+              {
+                style: {
+                  ...subtle,
+                  fontSize: 10,
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                  fontVariantNumeric: 'tabular-nums',
+                  letterSpacing: '0.02em',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                },
+              },
               fill(translate('count'), counts),
             ),
           ),
@@ -745,7 +766,12 @@ window.__ModuleLoader__.load({
         const progressBar = h(
           'div',
           { className: 'dsh-todo-progress', 'aria-hidden': true },
-          h('div', { style: { width: `${progress}%` } }),
+          h('div', {
+            style: {
+              width: `${progress}%`,
+              boxShadow: progress > 0 ? '0 0 10px var(--dsw-alias-brand-primary)' : 'none',
+            },
+          }),
         )
 
         const addBar = h(
@@ -781,6 +807,7 @@ window.__ModuleLoader__.load({
             'button',
             {
               type: 'button',
+              className: 'dsh-todo-submit',
               onClick: () => void submitDraft(),
               disabled: busy || draft.trim() === '',
               style: {
@@ -792,6 +819,7 @@ window.__ModuleLoader__.load({
                 color: 'var(--dsw-alias-bg-base)',
                 fontSize: 12.5,
                 fontWeight: 600,
+                letterSpacing: '0.03em',
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -835,8 +863,8 @@ window.__ModuleLoader__.load({
                     borderRadius: 5,
                     border: '1px solid transparent',
                     background: filter === key ? 'var(--dsw-alias-bg-layer-1)' : 'transparent',
-                    boxShadow: filter === key ? '0 1px 2px rgba(0, 0, 0, 0.10)' : 'none',
-                    color: filter === key ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-secondary)',
+                    boxShadow: filter === key ? '0 1px 2px rgba(0, 0, 0, 0.10), 0 0 10px -4px var(--dsw-alias-brand-primary)' : 'none',
+                    color: filter === key ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-secondary)',
                     fontSize: 11,
                     fontWeight: filter === key ? 600 : 400,
                     cursor: 'pointer',
@@ -902,7 +930,7 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
-                className: 'dsh-todo-check',
+                className: item.done ? 'dsh-todo-check is-done' : 'dsh-todo-check',
                 role: 'checkbox',
                 'aria-checked': item.done,
                 'aria-label': item.text,
@@ -912,7 +940,7 @@ window.__ModuleLoader__.load({
                   height: 19,
                   marginTop: 1,
                   padding: 0,
-                  borderRadius: '50%',
+                  borderRadius: 6,
                   border: `1.5px solid ${item.done ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'}`,
                   background: item.done ? 'var(--dsw-alias-brand-primary)' : 'transparent',
                   display: 'flex',
@@ -977,7 +1005,7 @@ window.__ModuleLoader__.load({
                   item.done && Number.isFinite(item.doneAt)
                     ? h(
                         'span',
-                        { style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
+                        { style: { fontSize: 10.5, fontVariantNumeric: 'tabular-nums', color: 'var(--dsw-alias-label-secondary)' } },
                         fill(translate('completedAt'), { date: formatDate(item.doneAt) }),
                       )
                     : null,
@@ -1048,7 +1076,7 @@ window.__ModuleLoader__.load({
           header,
           progressBar,
           h('div', { className: 'dsh-todo-float-body' }, addBar, filterBar, banner, h('div', { className: 'dsh-todo-float-list' }, listBody)),
-          h('div', { className: 'dsh-todo-footer' }, translate('hint')),
+          h('div', { className: 'dsh-todo-footer' }, h('span', { className: 'dsh-todo-footer-dot', 'aria-hidden': true }), translate('hint')),
         )
       }
     }
