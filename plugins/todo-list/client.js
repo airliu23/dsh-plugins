@@ -638,7 +638,7 @@ window.__ModuleLoader__.load({
             {
               type: 'button',
               className: 'dsh-todo-close',
-              onClick: ui.close,
+              onClick: () => ui.close(),
               onPointerDown: (event) => event.stopPropagation(),
               'aria-label': translate('close'),
               title: translate('close'),
