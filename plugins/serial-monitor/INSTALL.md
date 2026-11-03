@@ -113,6 +113,7 @@ plugin_manager { action: "set_plugin", target: "include:serial-monitor", enabled
 - 同一 COM 口只能被一个进程持有：插件开着口时，别的工具（含 `uart_capture.py`）会拿到 `Access is denied`。要独占就先在面板「全部停止」。
 - 「全部停止」后端口约 0.1 s 交还（优雅关闭），不会有驱动卡死的残留。
 - 数据是 Host **推送**的（SSE `text/event-stream`），面板不轮询；断线后浏览器自动重连，漏掉的字节用 `/poll` 按游标补齐，所以刷新页面或短暂断网都不会丢字节。
+- 高波特率（1.5 Mbaud）下读口和发帧分属两个线程，接收缓冲开到 2 MB，所以写管道被堵也不会憋住读口。`status` 里 `· 线端 N B` 是 sidecar 从线上读到的真实字节数，可用来和板子自己的日志对账。
 - 会话不能开/关端口，这是设计：工具里根本没有那些动作。
 
 ## 自测（改代码后）
@@ -120,9 +121,11 @@ plugin_manager { action: "set_plugin", target: "include:serial-monitor", enabled
 测试脚本在仓库里的 `plugins/serial-monitor/test/`（不进 tarball，但随 git 仓库走），用相对路径，可以直接在包目录里跑：
 
 ```
+python test/sidecar_selftest.py  # 读泵：不丢字节 / 跨块 UTF-8 / 合帧 / stats 计数
 node test/push-flow.mjs         # 推送链路：无需硬件，假 sidecar 走完整 spawn→SSE 链
-node test/serial-smoke.mjs      # Host：只读边界 + 面板开停 + 读数据（需要板子在发）
-node test/client-refresh.mjs    # Client：推送即重绘 + 突发合并 + 自动滚动（两种布局）
+node test/burst-flow.mjs        # 吞吐：2 MB 突发灌进来，字节数必须一一对上
+node test/client-refresh.mjs    # Client：推送即重绘 + 突发合并 + 自动滚动 + 尾部渲染
+SERIAL_TEST_PORT=COM25 node test/serial-smoke.mjs   # 真实板子（端口不存在会自动 SKIP）
 ```
 
-`serial-smoke` 要真实端口，跑之前先把插件停掉，否则测试与真实例抢 COM 口；板子静默时它会把字节相关断言降级成 SKIP（推送链路由 `push-flow` 覆盖）。测试自己的锁/清单写在 `test/.state*/`（已 gitignore）。
+`serial-smoke` 要真实端口，跑之前先把插件停掉，否则测试与真实例抢 COM 口；板子静默时它会把字节相关断言降级成 SKIP（推送链路由 `push-flow` / `burst-flow` 覆盖）。测试自己的锁/清单写在 `test/.state*/`（已 gitignore）。

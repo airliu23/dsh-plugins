@@ -290,7 +290,21 @@ await tick(80)
 render()
 check('column pinned when the pre cannot scroll', listElement !== null && listElement.atBottom, `listScrollTop=${listElement?.scrollTop} scrollHeight=${listElement?.scrollHeight}`)
 
-// 8) A closed stream disappears on the pushed `gone` frame.
+// 8) Past TEXT_LIMIT the pane keeps following: growth is keyed on the stream
+//    total (not on the retained text length, which stops changing at the cap)
+//    and only the tail is put in the DOM.
+const filler = 'x'.repeat(100_000)
+// Back to the layout where the `pre` itself scrolls, so "still follows" is a
+// real assertion rather than a property of the auto-height fake.
+growMode = false
+for (let round = 0; round < 12; round += 1) push(`${filler}\n[end ${round}]\n`)
+await tick(120)
+text = render()
+check('pane renders only the tail', text.length < 80_000, `${text.length} chars in the pane`)
+check('newest line is visible', text.includes('[end 11]'))
+check('pane still follows after the text cap', first.atBottom, `scrollTop=${first.scrollTop}`)
+
+// 9) A closed stream disappears on the pushed `gone` frame.
 source.fire('gone', { key: KEY })
 await tick(40)
 text = render()

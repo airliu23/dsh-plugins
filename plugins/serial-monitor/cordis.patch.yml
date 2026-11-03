@@ -4,7 +4,8 @@
       config:
         pythonPath: python
         autoStart: true
-        ringChars: 400000
+        # 4 M chars across a chunked ring (~26 s of wire at 1.5 Mbaud).
+        ringChars: 4000000
         # Seed only: the Session owns the list (`serial_monitor watch`), and its
         # choice is remembered in %TEMP%/dsh-serial-monitor/declared.json.
         streams:

@@ -107,10 +107,15 @@ const tool = (args) => tools.get('serial_monitor').execute(args, {})
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const post = (path, body) => call(path, { method: 'POST', body })
 
+/** Which real port to exercise; any machine's board with `[tx]` output works. */
+const PORT = process.env.SERIAL_TEST_PORT ?? 'COM23'
+const BAUD = Number(process.env.SERIAL_TEST_BAUD ?? 9600)
+const KEY = `${PORT}@${BAUD}`
+
 const OPEN_ONCE = `
 import serial
 try:
-    handle = serial.Serial("COM23", 9600, timeout=0.2)
+    handle = serial.Serial(${JSON.stringify(PORT)}, ${BAUD}, timeout=0.2)
     data = handle.read(64)
     handle.close()
     print("port free, bytes:", len(data))
@@ -128,14 +133,28 @@ const check = (label, condition, detail) => {
 const schema = tools.get('serial_monitor').parameters.properties.action.enum
 check('tool vocabulary is read-only', JSON.stringify(schema) === JSON.stringify(['status', 'read', 'wait', 'mark', 'ports']), schema.join('/'))
 for (const action of ['watch', 'add', 'remove', 'pause', 'resume']) {
-  const refused = await tool({ action, streams: [{ port: 'COM23', baud: 9600 }], port: 'COM23', baud: 9600, key: 'COM23@9600' })
+  const refused = await tool({ action, streams: [{ port: PORT, baud: BAUD }], port: PORT, baud: BAUD, key: KEY })
   check(`tool refuses ${action}`, typeof refused.note === 'string' && refused.note.includes('会话不能开关串口'), refused.note)
 }
 const afterRefusals = await call('/status')
 check('refused actions opened nothing', afterRefusals.body.streams.length === 0, `streams=${afterRefusals.body.streams.length}`)
 
 // --- the user's path: panel routes open and close captures ---------------
-const opened = await post('/watch', { streams: [{ port: 'COM23', baud: 9600 }] })
+const available = ((await tool({ action: 'ports' })).ports ?? []).map((port) => port.device)
+if (!available.includes(PORT)) {
+  console.log(`SKIP hardware section — ${PORT} is not present (found: ${available.join(', ') || 'none'})`)
+  console.log('   (push-flow.mjs and burst-flow.mjs cover the same routes without a port)')
+  for (const dispose of disposers) {
+    try {
+      dispose()
+    } catch {
+      /* ignore */
+    }
+  }
+  process.exit(failures.length === 0 ? 0 : 1)
+}
+
+const opened = await post('/watch', { streams: [{ port: PORT, baud: BAUD }] })
 check('panel opens a port', opened.body.streams.length === 1, `streams=${opened.body.streams.map((stream) => stream.key).join(',')}`)
 
 // --- push transport: bytes arrive on their own, without any poll ---------
@@ -151,7 +170,7 @@ check('push: snapshot on connect', events.body.includes('event: snapshot'))
 const waited = await tool({ action: 'wait', pattern: '[tx]', timeoutMs: 8000 })
 const hasTraffic = waited.matched === true
 if (hasTraffic) check('session wait sees the data', true, `${waited.waitedMs} ms`)
-else console.log('SKIP session wait sees the data — no traffic on COM23 (board silent? push-flow.mjs covers this)')
+else console.log(`SKIP session wait sees the data — no traffic on ${KEY} (board silent? push-flow.mjs covers this)`)
 
 await sleep(250) // one coalescing window
 if (hasTraffic) {
@@ -163,12 +182,12 @@ if (hasTraffic) {
   console.log('SKIP push: data frames — nothing to push while the board is quiet')
 }
 
-const read = await tool({ action: 'read', target: 'COM23@9600', sinceLast: true, tailChars: 200 })
+const read = await tool({ action: 'read', target: KEY, sinceLast: true, tailChars: 200 })
 if (hasTraffic) check('session read returns bytes', (read.streams[0]?.total ?? 0) > 0, `${read.streams[0]?.total} B`)
 else console.log('SKIP session read returns bytes — no traffic')
 
 const status = await tool({ action: 'status' })
-check('status reports the user-owned list', JSON.stringify(status.declared) === JSON.stringify([{ port: 'COM23', baud: 9600 }]), JSON.stringify(status.declared))
+check('status reports the user-owned list', JSON.stringify(status.declared) === JSON.stringify([{ port: PORT, baud: BAUD }]), JSON.stringify(status.declared))
 
 const listed = await tool({ action: 'ports' })
 check('ports only lists names', Array.isArray(listed.ports) && listed.ports.every((port) => typeof port.device === 'string'), `${listed.ports.length} ports`)
@@ -192,7 +211,7 @@ check('panel stop releases the port', freed.startsWith('port free'), freed)
 const resumed = await post('/resume')
 check('panel resume reopens the same list', resumed.body.streams.length === 1, `streams=${resumed.body.streams.length}`)
 
-const removed = await post('/remove', { key: 'COM23@9600' })
+const removed = await post('/remove', { key: KEY })
 check('panel remove closes one stream', removed.body.streams.length === 0)
 check('declared list follows the user', removed.body.declared.length === 0, JSON.stringify(removed.body.declared))
 

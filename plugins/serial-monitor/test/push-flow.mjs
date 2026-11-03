@@ -142,9 +142,24 @@ const tool = tools.get('serial_monitor')
 const read = await tool.execute({ action: 'read', target: 'COM1@9600', tailChars: 200 }, {})
 check('session tool reads the pushed bytes', (read.streams?.[0]?.text ?? '').includes('[tx] line'), `${read.streams?.[0]?.total} B`)
 
+// --- the wire byte count reaches the panel and the session ---------------
+const statusRes = makeRes()
+await routes.get('/plugins/serial-monitor/status')(makeReq({ url: '/plugins/serial-monitor/status' }), statusRes)
+const streamState = JSON.parse(statusRes.body).streams?.[0] ?? {}
+check('status carries the wire byte count', streamState.portBytes > 0, `portBytes=${streamState.portBytes} chars=${streamState.total}`)
+// `stats` is a periodic snapshot, so the two counters trail each other by at
+// most one window while data is flowing; they must agree to within that.
+check(
+  'wire count and character count agree',
+  Math.abs(streamState.portBytes - streamState.total) < 400,
+  `wire=${streamState.portBytes} chars=${streamState.total}`,
+)
+
 // --- stopping a stream pushes `gone` -------------------------------------
 await post('/stop')
-const afterStop = dataFrames
+// Let the coalescing window that was already in flight drain before counting.
+await sleep(150)
+const afterStop = frames(events.body, 'data')
 await sleep(300)
 check('stop pushes meta and gone', frames(events.body, 'meta') >= 1 && frames(events.body, 'gone') >= 1, `meta=${frames(events.body, 'meta')} gone=${frames(events.body, 'gone')}`)
 check('no bytes are pushed after stop', frames(events.body, 'data') === afterStop, `${frames(events.body, 'data')} frames`)

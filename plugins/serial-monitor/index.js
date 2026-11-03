@@ -36,7 +36,9 @@ export function apply(ctx, config = {}) {
   /** Overridable so a test can drive the whole push path without hardware. */
   const sidecarPath = typeof config.sidecarPath === 'string' && config.sidecarPath !== '' ? config.sidecarPath : SIDECAR
   const autoStart = config.autoStart !== false
-  const ringChars = Number.isFinite(config.ringChars) ? Math.max(4_000, config.ringChars) : 400_000
+  // 4 M chars ≈ 26 s of wire at 1.5 Mbaud; the chunked ring makes the size
+  // cheap to keep.
+  const ringChars = Number.isFinite(config.ringChars) ? Math.max(4_000, config.ringChars) : 4_000_000
   /** Lock files + the remembered declared list live here. */
   const STATE_DIR = typeof config.stateDir === 'string' && config.stateDir !== '' ? config.stateDir : join(tmpdir(), 'dsh-serial-monitor')
   const DECLARED_FILE = join(STATE_DIR, 'declared.json')
@@ -142,16 +144,44 @@ export function apply(ctx, config = {}) {
     return reclaimed
   }
 
-  function ensureRing(capture) {
-    if (capture.buffer.length > ringChars) capture.buffer = capture.buffer.slice(capture.buffer.length - ringChars)
-  }
-
+  /**
+   * The ring is a list of chunks, not one string: at 1.5 Mbaud the sidecar
+   * hands over ~9 frames of 16 KB per second, and re-slicing a multi-megabyte
+   * string on every append would stall the reader that feeds it.
+   */
   function appendTo(capture, text) {
     if (text === '') return
-    capture.buffer += text
+    capture.chunks.push(text)
+    capture.kept += text.length
     capture.total += text.length
-    ensureRing(capture)
+    while (capture.kept > ringChars && capture.chunks.length > 1) capture.kept -= capture.chunks.shift().length
     queueData(capture, text)
+  }
+
+  /** Absolute cursor of the oldest retained character. */
+  function bufferStart(capture) {
+    return capture.total - capture.kept
+  }
+
+  /** Slice by absolute cursors (`from` inclusive, `to` exclusive). */
+  function bufferSlice(capture, from, to) {
+    const start = bufferStart(capture)
+    const begin = Math.max(from, start)
+    const end = Math.min(to === undefined ? capture.total : to, capture.total)
+    if (end <= begin) return ''
+    const parts = []
+    let offset = start
+    for (const chunk of capture.chunks) {
+      const chunkEnd = offset + chunk.length
+      if (chunkEnd > begin && offset < end) parts.push(chunk.slice(Math.max(begin - offset, 0), Math.min(end - offset, chunk.length)))
+      offset = chunkEnd
+      if (offset >= end) break
+    }
+    return parts.join('')
+  }
+
+  function bufferTail(capture, count) {
+    return bufferSlice(capture, capture.total - count)
   }
 
   // --- push, not polling -----------------------------------------------------
@@ -316,7 +346,7 @@ export function apply(ctx, config = {}) {
     const existing = streams.get(key)
     if (existing !== undefined && existing.child !== null) return existing
 
-    const capture = existing ?? { key, port, baud, child: null, buffer: '', total: 0, error: null, startedAt: Date.now(), openedAt: null }
+    const capture = existing ?? { key, port, baud, child: null, chunks: [], kept: 0, total: 0, portBytes: 0, error: null, startedAt: Date.now(), openedAt: null }
     capture.error = null
     capture.child = null
     capture.openedAt = null
@@ -352,7 +382,13 @@ export function apply(ctx, config = {}) {
           continue
         }
         if (message.type === 'data' && typeof message.text === 'string') appendTo(capture, message.text)
-        else if (message.type === 'opened') {
+        else if (message.type === 'stats' && Number.isFinite(message.bytes)) {
+          // Bytes actually pulled off the wire, counted in the sidecar. If this
+          // runs ahead of `capture.total` (characters), the gap is multibyte
+          // decoding, not loss; if it stalls while the board talks, the driver
+          // dropped before we ever saw it.
+          capture.portBytes = message.bytes
+        } else if (message.type === 'opened') {
           capture.openedAt = Date.now()
           capture.error = null
           publishState(capture)
@@ -455,15 +491,17 @@ export function apply(ctx, config = {}) {
       baud: capture.baud,
       running: capture.child !== null,
       total: capture.total,
+      /** Bytes the sidecar pulled off the wire; > total means multibyte text. */
+      portBytes: capture.portBytes ?? 0,
       error: capture.error,
     }
   }
 
   function streamSlice(capture, since) {
-    const start = capture.total - capture.buffer.length
+    const start = bufferStart(capture)
     if (since >= capture.total) return { ...streamBase(capture), cursor: capture.total, text: '' }
-    if (since < start) return { ...streamBase(capture), cursor: capture.total, truncated: true, text: capture.buffer }
-    return { ...streamBase(capture), cursor: capture.total, text: capture.buffer.slice(since - start) }
+    if (since < start) return { ...streamBase(capture), cursor: capture.total, truncated: true, text: bufferSlice(capture, start, capture.total) }
+    return { ...streamBase(capture), cursor: capture.total, text: bufferSlice(capture, since, capture.total) }
   }
 
   function snapshot(sinceMap) {
@@ -494,7 +532,7 @@ export function apply(ctx, config = {}) {
   function describeStreams() {
     return [...streams.values()].map((capture) => ({
       ...streamBase(capture),
-      tail: capture.buffer.slice(-2_000),
+      tail: bufferTail(capture, 2_000),
     }))
   }
 
@@ -511,10 +549,10 @@ export function apply(ctx, config = {}) {
     const sinceLast = args.sinceLast === true
     const chosen = target === undefined ? [...streams.values()] : [resolveCapture(target)].filter(Boolean)
     return chosen.map((capture) => {
-      const start = capture.total - capture.buffer.length
+      const start = bufferStart(capture)
       const from = sinceLast && toolCursors.has(capture.key) ? toolCursors.get(capture.key) : capture.total - limit
       const begin = Math.max(from, start, capture.total - limit)
-      const text = capture.buffer.slice(begin - start)
+      const text = bufferSlice(capture, begin, capture.total)
       toolCursors.set(capture.key, capture.total)
       return { ...streamBase(capture), cursor: capture.total, text, dropped: from < start }
     })
@@ -527,10 +565,7 @@ export function apply(ctx, config = {}) {
     const targets = target === undefined ? [...streams.values()] : [target]
     const offsets = new Map(targets.map((capture) => [capture.key, capture.total]))
     const started = Date.now()
-    const readSince = (capture) => {
-      const start = capture.total - capture.buffer.length
-      return capture.buffer.slice(Math.max(offsets.get(capture.key) ?? 0, start) - start)
-    }
+    const readSince = (capture) => bufferSlice(capture, Math.max(offsets.get(capture.key) ?? 0, bufferStart(capture)), capture.total)
     const matches = (chunk) => {
       if (pattern === '') return chunk.length > 0
       if (pattern.length > 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
@@ -834,10 +869,17 @@ export function apply(ctx, config = {}) {
   // Agent-facing tool: read-only. The user owns the ports through the panel;
   // the Session only reads the same in-process buffers the panel shows.
   ctx.inject(['tools'], (toolCtx) => {
+    /**
+     * `total` counts characters in the ring; `portBytes` counts bytes the
+     * sidecar pulled off the wire. They differ only for multi-byte text, so the
+     * wire number is shown when it does — that is the number to compare against
+     * the device's own log when high baud rates look lossy.
+     */
     const formatStreams = (entries) =>
       entries
         .map((entry) => {
-          const head = `${entry.key} · ${entry.total} B${entry.error ? ` · error=${entry.error}` : ''}`
+          const wire = Number.isFinite(entry.portBytes) && entry.portBytes > 0 && entry.portBytes !== entry.total ? ` · 线端 ${entry.portBytes} B` : ''
+          const head = `${entry.key} · ${entry.total} B${wire}${entry.error ? ` · error=${entry.error}` : ''}`
           return entry.text === '' || entry.text === undefined ? head : `${head}\n${entry.text}`
         })
         .join('\n\n')

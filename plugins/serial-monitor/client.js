@@ -16,7 +16,14 @@ window.__ModuleLoader__.load({
 
     const NS = 'serial-monitor'
     const API = '/plugins/serial-monitor'
-    const TEXT_LIMIT = 200_000
+    /** Kept for copy/scrollback; the pane renders only DISPLAY_LIMIT of it. */
+    const TEXT_LIMIT = 1_000_000
+    /**
+     * What actually goes into the DOM. At 1.5 Mbaud the pane repaints every
+     * 32 ms, so the cost of a repaint is proportional to this, not to the
+     * stream: 64 K chars is ~1000 lines, far more than one screen.
+     */
+    const DISPLAY_LIMIT = 64_000
     /** Tab type id: also the key both sidebar.right.pane.tab slots dispatch on. */
     const TAB_ID = '@local/serial-monitor'
     const TAB_KIND = 'serial-monitor'
@@ -498,7 +505,10 @@ window.__ModuleLoader__.load({
         // `state.streams` is mutated in place, so it can never be a dependency:
         // a stamp derived from the rendered text is what tells this effect that
         // new lines actually arrived.
-        const growth = state.streams.map((stream) => `${stream.key}:${stream.text.length}`).join('|')
+        // Keyed on the stream's total, not on the retained text length: once
+        // the text hits TEXT_LIMIT its length stops changing, and a length-based
+        // dependency would silently stop following the tail at high baud rates.
+        const growth = state.streams.map((stream) => `${stream.key}:${stream.total}`).join('|')
 
         // Pinning must work for whichever node actually scrolls: with a
         // definite-height pane it is the card's own `pre`, but if the tab is
@@ -617,7 +627,11 @@ window.__ModuleLoader__.load({
                   boxSizing: 'border-box',
                 },
               },
-              stream.text === '' ? h('span', { style: subtle }, stream.truncated ? translate('truncated') : '…') : stream.text,
+              stream.text === ''
+                ? h('span', { style: subtle }, stream.truncated ? translate('truncated') : '…')
+                : stream.text.length > DISPLAY_LIMIT
+                  ? `…\n${stream.text.slice(stream.text.length - DISPLAY_LIMIT)}`
+                  : stream.text,
             ),
           ),
         )

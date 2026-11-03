@@ -9,8 +9,10 @@ tool read) is exercised for real, only the bytes are synthetic.
     python -u fake-sidecar.py read --port COM1 --baud 9600 --owner <pid>
 """
 import json
+import os
 import sys
 import threading
+import time
 
 LINE_DELAY_SECONDS = 0.02
 
@@ -47,12 +49,47 @@ def main():
 
     threading.Thread(target=watch_stdin, daemon=True).start()
 
+    # FAKE_BURST_BYTES turns the double into a bandwidth test: push that many
+    # bytes as fast as the pipe takes them, the way a 1.5 Mbaud dump arrives in
+    # one go. Nothing else is emitted afterwards, so the byte count and the
+    # character count can be compared exactly.
+    burst = int(os.environ.get("FAKE_BURST_BYTES", "0") or "0")
+    sent = 0
+    if burst > 0:
+        line = b"[tx] " + b"a" * 79 + b"\n"
+        chunk = b""
+        while sent < burst and not stop.is_set():
+            chunk += line
+            sent += len(line)
+            if len(chunk) >= 16 * 1024:
+                text = chunk.decode("utf-8")
+                chunk = b""
+                emit({"type": "data", "text": text})
+                emit({"type": "stats", "bytes": sent})
+        if chunk:
+            emit({"type": "data", "text": chunk.decode("utf-8")})
+            chunk = b""
+            emit({"type": "stats", "bytes": sent})
+        while not stop.is_set():
+            stop.wait(0.1)
+        emit({"type": "stats", "bytes": sent})
+        emit({"type": "closed"})
+        return 0
+
     counter = 0
+    last_stats = time.monotonic()
     while not stop.is_set():
         counter += 1
-        emit({"type": "data", "text": "[tx] line %d\n" % counter})
+        line = "[tx] line %d\n" % counter
+        sent += len(line.encode("utf-8"))
+        emit({"type": "data", "text": line})
+        # Mirror the real sidecar's wire-byte accounting.
+        if time.monotonic() - last_stats >= 0.1:
+            emit({"type": "stats", "bytes": sent})
+            last_stats = time.monotonic()
         stop.wait(LINE_DELAY_SECONDS)
 
+    emit({"type": "stats", "bytes": sent})
     emit({"type": "closed"})
     return 0
 

@@ -75,12 +75,21 @@ profile 的 patch 里覆盖这一行即可（`streams` 只是**首次运行的�
   config:
     pythonPath: python          # 需要能 import serial
     autoStart: true
-    ringChars: 400000
+    ringChars: 4000000          # 跨块环形缓冲，1.5 Mbaud 约 26 s
     # sidecarPath: ./test/fake-sidecar.py   # 只有测试会改它（无硬件跑推送链路）
     streams:
       - port: COM23
         baud: 9600
 ```
+
+## 高波特率（1.5 Mbaud）
+
+1.5 Mbaud ≈ 150 KB/s，Windows 的串口接收队列只有几 KB——**几十毫秒的停顿就够驱动丢字节**。所以读口和发帧拆成两个线程：
+
+- `serial_sidecar.py` 一个线程只做 `read()` 把字节搬进内存队列，另一个线程才做 JSON 编码 + 写 stdout；打开时还会 `set_buffer_size(rx_size=2 MB)`（Windows 专有，失败就忽略）。写 pipe 被堵、Python GC 抖动都不会再憋住读口。
+- 每 250 ms 发一条 `{"type":"stats","bytes":N}`，这是**从线端读到的真实字节数**。`status` 里当它和字符数不一致时会显示 `· 线端 N B`——拿这个数字和板子自己的日志对，就能判断丢没丢、丢在哪一层。
+- Host 的环形缓冲改成分块列表（不再每次 append 都重切几 MB 的字符串），默认 4 M 字符。
+- 面板只把**最后 64 K 字符**放进 DOM（约 1000 行），重绘成本与流无关；`total` 变化驱动自动滚动，所以即使文本到了上限也照样跟最新行。
 
 ## 已知边界
 
@@ -89,7 +98,9 @@ profile 的 patch 里覆盖这一行即可（`streams` 只是**首次运行的�
 - 端口被别的程序占着时，卡片和 `status` 都会带上 `error=打不开 COM23 …Access is denied`，不会静默。
 - 右栏 tab 依赖 `@deepseek-ai/dsh-client-ui-sidebar-right` 暴露的两个客户端服务：`sidebarRightTabs.register({id, kind, title})` 与 `sidebarRight.openTab(kind, ...)`。它们由 `ctx.reflect.provide` 提供、不在 Service 目录里，用 `ctx.get('sidebarRightTabs')` / `ctx.get('sidebarRight')` 取；上游若改名，tab 就打不开（按钮会以 tooltip 报错）。自检结果看 `serial_monitor status` 输出里的 `client:` 行。
 - 面板是 session 作用域：未打开会话时它不渲染（标题栏按钮同理），但 Host 侧抓取不受影响。
-- Host 侧冒烟测试：`node test/serial-smoke.mjs`（假 ctx 挂载 `apply()`：验证工具只读并拒绝 watch/add/remove/pause/resume → 面板路由开/停/重开/移除 → SSE 握手与 snapshot → 会话 read/wait 读到字节 → `全部停止` 后外部进程能打开端口）。跑之前先把插件停掉，否则真占着 COM 口。
+- Host 侧冒烟测试：`SERIAL_TEST_PORT=COM25 node test/serial-smoke.mjs`（假 ctx 挂载 `apply()`：验证工具只读并拒绝 watch/add/remove/pause/resume → 面板路由开/停/重开/移除 → SSE 握手与 snapshot → 会话 read/wait 读到字节 → `全部停止` 后外部进程能打开端口）。跑之前先把插件停掉；端口不存在时自动 SKIP 硬件段。
 - 无硬件推送测试：`node test/push-flow.mjs`（把 sidecar 换成 `test/fake-sidecar.py`，走同一条 spawn→stdout→环形缓冲→SSE 链路：snapshot / 收到就推 / 突发合并 / 停止发 `gone` / 工具读同一份字节）。不需要任何串口。
-- 客户端回归测试：`node test/client-refresh.mjs`（迷你 React + 假 EventSource，验推送到达即重绘、30 行突发只重绘一次、`/poll` 只在连接时调一次、自动滚动两种布局）。
-- 三个测试都用相对路径，`test/.state*/` 存各自的锁与清单（已 gitignore），不会碰你在跑的那几路。
+- 吞吐测试：`node test/burst-flow.mjs`（2 MB 一次灌进同一条链路，断言 `线端字节 == 字符数`、环形缓冲裁剪后计数不丢、SSE 合并成个位数帧）。
+- 读泵单测：`python test/sidecar_selftest.py`（用假 handle 喂碎块，断言不丢字节、跨块 UTF-8 不产生替换字符、批量合帧、`stats` 计数正确）。
+- 客户端回归测试：`node test/client-refresh.mjs`（迷你 React + 假 EventSource，验推送到达即重绘、30 行突发只重绘一次、`/poll` 只在连接时调一次、两种布局下自动滚动、超上限后只渲染尾部且仍跟最新行）。
+- 所有测试都用相对路径，`test/.state*/` 存各自的锁与清单（已 gitignore），不会碰你在跑的那几路。
