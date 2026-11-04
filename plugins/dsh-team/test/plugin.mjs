@@ -25,6 +25,17 @@ printf 'report for: %s\\n' "$(printf '%s' "$task" | tail -n 1)"
 
 const registered = { tools: [], routes: [], prompts: [], cleanups: [] }
 
+/** What the Host half would use to push a finished report back into a Session. */
+const pushed = []
+const fakeAgent = {
+  id: 'agent-test',
+  session: { id: 'session-test' },
+  followup(message) {
+    pushed.push(message)
+  },
+}
+const notified = { flushed: 0, resolved: [] }
+
 const stubCtx = {
   effect(fn) {
     const cleanup = fn()
@@ -71,10 +82,38 @@ const stubCtx = {
         },
       })
     }
+    if (names.includes('sessions') || names.includes('sessionController')) {
+      cb({
+        effect(fn) {
+          fn()
+        },
+        sessions: {
+          async flush() {
+            notified.flushed += 1
+            return true
+          },
+        },
+        sessionController: {
+          async resolveAgent(sessionId) {
+            notified.resolved.push(sessionId)
+            return { agent: fakeAgent }
+          },
+        },
+      })
+    }
   },
+  logger: { warn() {}, info() {} },
   get() {
     return undefined
   },
+}
+
+const until = async (check, timeoutMs = 5_000) => {
+  const deadline = Date.now() + timeoutMs
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error('等待超时')
+    await new Promise((done) => setTimeout(done, 50))
+  }
 }
 
 try {
@@ -99,13 +138,35 @@ try {
   assert.match(empty.text, /还没有工单/)
 
   // --- post then wait -----------------------------------------------------
-  const posted = await tool.execute({ action: 'post', title: '冒烟', task: '只输出一行 READY' })
+  // The tool call carries the agent; a finished ticket must push its report
+  // back into that Session instead of leaving the caller to poll.
+  const exec = { agent: fakeAgent }
+  const posted = await tool.execute({ action: 'post', title: '冒烟', task: '只输出一行 READY' }, exec)
   assert.match(posted.text, /已投工单 t-/)
+  assert.match(posted.text, /推回本会话/, 'post 的回报必须说明完成会自动通知')
 
   const id = posted.text.match(/已投工单 (t-[\w-]+)/)[1]
   const waited = await tool.execute({ action: 'wait', ids: [id], timeoutMs: 10_000 })
   assert.match(waited.text, /全部结束/)
   assert.match(waited.text, /report for: 只输出一行 READY/)
+
+  await until(() => pushed.length > 0)
+  const notice = pushed[0]
+  assert.equal(notice.role, 'user')
+  assert.equal(notice.source.kind, 'dsh-team')
+  assert.equal(notice.source.ticketId, id)
+  // The posting tool call hands us the live agent, so no Session restore is needed.
+  assert.deepEqual(notified.resolved, [], '有活着的 agent 时不该再 resolveAgent')
+  assert.equal(notified.flushed, 1, '推送后必须 flush 会话')
+  assert.match(notice.content[0].text, /【后台工单结束】冒烟/)
+  assert.match(notice.content[0].text, /report for: 只输出一行 READY/)
+  assert.equal(Object.isFrozen(notice), true)
+
+  // --- a panel ticket (no Session) is never pushed -----------------------
+  const panel = await tool.execute({ action: 'post', title: '面板单', task: '只输出一行 PANEL' })
+  await tool.execute({ action: 'wait', ids: [panel.text.match(/已投工单 (t-[\w-]+)/)[1]], timeoutMs: 10_000 })
+  await new Promise((done) => setTimeout(done, 300))
+  assert.equal(pushed.length, 1, '面板投的单没有会话可通知')
 
   // --- the report survives a reload (same file, new store) ---------------
   const repo = await tool.execute({ action: 'board', status: 'done' })

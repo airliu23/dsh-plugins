@@ -73,6 +73,10 @@ export function createTicketStore(options) {
       task,
       state: state === 'running' ? 'failed' : state, // a running ticket died with the previous process
       source: clamp(entry.source, 40) || 'session',
+      // The Session a ticket belongs to ('' = posted from the panel): the Host
+      // pushes the finished report back to it, so nobody has to poll `wait`.
+      sessionId: clamp(entry.sessionId, 200),
+      notifiedAt: Number.isFinite(entry.notifiedAt) ? entry.notifiedAt : null,
       createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : now(),
       startedAt: Number.isFinite(entry.startedAt) ? entry.startedAt : null,
       finishedAt: Number.isFinite(entry.finishedAt) ? entry.finishedAt : null,
@@ -153,6 +157,8 @@ export function createTicketStore(options) {
       task,
       state: 'queued',
       source: clamp(input.source, 40) || 'session',
+      sessionId: clamp(input.sessionId, 200),
+      notifiedAt: null,
       createdAt: now(),
       startedAt: null,
       finishedAt: null,
@@ -179,6 +185,7 @@ export function createTicketStore(options) {
     if (typeof fields.report === 'string') ticket.report = clamp(fields.report, MAX_REPORT)
     if (Number.isFinite(fields.startedAt)) ticket.startedAt = fields.startedAt
     if (Number.isFinite(fields.finishedAt)) ticket.finishedAt = fields.finishedAt
+    if (Number.isFinite(fields.notifiedAt)) ticket.notifiedAt = fields.notifiedAt
     changed()
     return ticket
   }

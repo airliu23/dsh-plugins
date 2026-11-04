@@ -10,3 +10,7 @@
         timeoutMs: 3600000
         # The `dsh` executable used to start a worker; empty = look it up on PATH.
         dshBin: ''
+        # Push the finished report back into the Session that posted the ticket.
+        notify: true
+        # How much of the report a pushed notification carries; the rest stays in reply.md.
+        notifyMaxChars: 4000

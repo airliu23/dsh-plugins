@@ -11,6 +11,7 @@
  * few minutes, or several independent tasks, or work that must outlive this
  * turn, becomes a ticket; a one-call lookup stays inline.
  */
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { createTicketStore, summarize } from './store.js'
@@ -39,6 +40,12 @@ export function apply(ctx, config = {}) {
     env: config.env,
   })
   const dispatcher = createDispatcher({ store, runner, maxWorkers: config.maxWorkers })
+
+  const notifyEnabled = config.notify !== false
+  const notifyMaxChars =
+    Number.isFinite(config.notifyMaxChars) && config.notifyMaxChars >= 500
+      ? Math.min(20_000, Math.trunc(config.notifyMaxChars))
+      : 4_000
 
   const listeners = new Set()
   let heartbeat = null
@@ -82,11 +89,107 @@ export function apply(ctx, config = {}) {
 
   const unsubscribe = store.onChange(broadcast)
 
+  // --- completion push -----------------------------------------------------
+  // A ticket belongs to the Session that posted it. When the worker ends, its
+  // report is pushed into that Session as a follow-up turn, so the agent
+  // reports back on its own instead of polling `team wait`.
+  const liveAgents = new Map() // sessionId → the agent captured from a tool call
+  const attempted = new Set()
+  let services = null
+  let delivering = false
+
+  // Tickets that ended while this Host was down are history, not news: mark them
+  // notified so activation does not replay yesterday's reports into a Session.
+  for (const ticket of store.snapshot().tickets) {
+    if (TERMINAL.has(ticket.state) && ticket.notifiedAt === null) store.patch(ticket.id, { notifiedAt: Date.now() })
+  }
+
+  ctx.inject(['sessions', 'sessionController'], (notifyCtx) => {
+    services = notifyCtx
+  })
+
+  /** Host-side message factory: `@deepseek-ai/dsh-llm` is not resolvable from a linked bundle. */
+  const deepFreeze = (value) => {
+    if (value !== null && typeof value === 'object') {
+      for (const inner of Object.values(value)) deepFreeze(inner)
+      Object.freeze(value)
+    }
+    return value
+  }
+
+  const userMessage = (text, source) =>
+    deepFreeze({ id: randomUUID(), role: 'user', content: [{ type: 'text', text }], source })
+
+  const sessionIdOf = (exec) => {
+    const id = exec?.agent?.session?.id ?? exec?.agent?.sessionId
+    return typeof id === 'string' ? id : ''
+  }
+
+  async function resolveAgent(sessionId) {
+    const live = liveAgents.get(sessionId)
+    if (live !== undefined) return live
+    try {
+      const resolved = await services?.sessionController?.resolveAgent(sessionId)
+      return resolved !== null && typeof resolved === 'object' && resolved.agent !== undefined ? resolved.agent : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  function notificationText(ticket) {
+    const elapsed = duration((ticket.finishedAt ?? Date.now()) - (ticket.startedAt ?? ticket.createdAt))
+    const body = ticket.state === 'failed' ? ticket.error || ticket.report : ticket.report
+    const clipped =
+      body.length > notifyMaxChars ? `${body.slice(0, notifyMaxChars)}\n…（已截断，完整报告在输出目录的 reply.md）` : body
+    return [
+      `【后台工单结束】${ticket.title}`,
+      `id: ${ticket.id} · 状态: ${ticket.state} · 耗时: ${elapsed}${Number.isInteger(ticket.exitCode) ? ` · 退出码: ${ticket.exitCode}` : ''}`,
+      ticket.outDir === '' ? null : `输出目录: ${ticket.outDir}`,
+      '',
+      body === '' ? '（worker 没有留下报告）' : clipped,
+      '',
+      '把结论转告用户；看板里还能看到这张工单和完整报告，不需要再等或再查。',
+    ]
+      .filter((line) => line !== null)
+      .join('\n')
+  }
+
+  async function deliverPending() {
+    if (!notifyEnabled || delivering) return
+    const due = store
+      .snapshot()
+      .tickets.filter(
+        (ticket) => TERMINAL.has(ticket.state) && ticket.sessionId !== '' && ticket.notifiedAt === null && !attempted.has(ticket.id),
+      )
+    if (due.length === 0) return
+    delivering = true
+    try {
+      for (const ticket of due) {
+        // Claim before sending: a later store change must not queue it twice.
+        attempted.add(ticket.id)
+        try {
+          const agent = await resolveAgent(ticket.sessionId)
+          if (agent === undefined) continue
+          agent.followup(userMessage(notificationText(ticket), { kind: 'dsh-team', ticketId: ticket.id }))
+          await services?.sessions?.flush(agent.session)
+          store.patch(ticket.id, { notifiedAt: Date.now() })
+        } catch (error) {
+          ctx.logger?.warn?.(`dsh-team: 工单 ${ticket.id} 的通知没有送达：${describe(error)}`)
+        }
+      }
+    } finally {
+      delivering = false
+    }
+  }
+
+  const unsubscribeNotify = store.onChange(() => void deliverPending())
+
   const shutdown = () => {
     if (closed) return
     closed = true
     dispatcher.stop()
     unsubscribe()
+    unsubscribeNotify()
     stopHeartbeat()
     for (const response of [...listeners]) {
       listeners.delete(response)
@@ -263,7 +366,8 @@ export function apply(ctx, config = {}) {
             '后台工单：把任务交给独立的 Headless worker 并行执行，不占用本轮对话。' +
             '**什么时候用**（满足任一条）：单个子任务预计超过 3 分钟；几件事互相独立、可以并行；任务要跑很久或要脱离对话；产出是大块文本、只需归档不必逐句消化。' +
             '**什么时候别用**：一次工具调用就能拿到答案（查文件、grep、读知识库）；答案依赖本会话上下文；需要来回澄清（worker 看不到本会话，也不会反问你）。' +
-            'action：post 投一张工单（title + task，task 必须自包含：说清项目路径、范围、验收标准）；board 看板；wait 等待工单结束并取回报告；cancel 取消排队中的工单；retry 重跑已结束的工单。',
+            'action：post 投一张工单（title + task，task 必须自包含：说清项目路径、范围、验收标准）；board 看板；wait 阻塞等待工单结束并取回报告；cancel 取消排队中的工单；retry 重跑已结束的工单。' +
+            'post 之后**不要**立刻 wait：工单结束时会自动把报告推回本会话，等通知即可；只有必须在本轮里拿到结果时才用 wait。',
           parameters: {
             type: 'object',
             properties: {
@@ -282,12 +386,17 @@ export function apply(ctx, config = {}) {
             schema: { type: 'object', additionalProperties: true, properties: {} },
             render: (_args, value) => [{ type: 'text', text: typeof value?.text === 'string' ? value.text : board() }],
           },
-          async execute(args) {
+          async execute(args, exec) {
             const action = typeof args?.action === 'string' ? args.action : 'board'
             if (action === 'post') {
-              const ticket = store.add({ title: args?.title, task: args?.task, source: 'session' })
+              const sessionId = sessionIdOf(exec)
+              if (sessionId !== '' && exec?.agent !== undefined) liveAgents.set(sessionId, exec.agent)
+              const ticket = store.add({ title: args?.title, task: args?.task, source: 'session', sessionId })
               dispatcher.pump()
-              return { text: `已投工单 ${ticket.id}（${ticket.title}）\n\n${board()}` }
+              const tail = notifyEnabled
+                ? '结束时会自动把报告推回本会话，你不用等；现在可以继续别的事。'
+                : '完成通知已关闭（notify: false），需要结果时用 wait。'
+              return { text: `已投工单 ${ticket.id}（${ticket.title}）\n${tail}\n\n${board()}` }
             }
             if (action === 'cancel') {
               dispatcher.cancel(String(args?.id ?? ''))
@@ -323,8 +432,9 @@ export function apply(ctx, config = {}) {
           order: 880,
           text: [
             '## 后台工单（dsh-team）',
-            '`team` 工具可以把任务交给独立 worker 并行跑：post 投单、board 看板、wait 等结果。',
+            '`team` 工具可以把任务交给独立 worker 并行跑：post 投单、board 看板、wait 阻塞取回。',
             '判据：单个子任务超过 3 分钟、或几件事互相独立、或需要脱离本轮对话 → 投单；一次调用就能拿到答案、或依赖本会话上下文 → 就地做。',
+            '投完就继续做别的：工单结束会以一条「后台工单结束」的通知推回本会话，不需要 wait 轮询。',
             'worker 看不到本会话，所以 task 必须自包含（项目路径、范围、验收标准）。',
           ].join('\n'),
         }),

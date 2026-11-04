@@ -230,6 +230,14 @@ window.__ModuleLoader__.load({
         startData()
         return off
       }, [])
+      // A running ticket's elapsed time changes with the clock, not with the
+      // data: without this tick the board reads "0s" until you click something.
+      const live = store.tickets.some((ticket) => !isTerminal(ticket))
+      React.useEffect(() => {
+        if (!live) return undefined
+        const timer = setInterval(() => bump((value) => value + 1), 1_000)
+        return () => clearInterval(timer)
+      }, [live])
       return store
     }
 

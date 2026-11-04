@@ -71,6 +71,22 @@ try {
   assert.equal(store.find('t-9')?.state, 'failed')
   assert.match(store.find('t-9')?.error ?? '', /Host/)
 
+  // --- a ticket remembers the Session that posted it ----------------------
+  const owned = store.add({ title: '带会话', task: 'x', sessionId: 'session-abc' })
+  assert.equal(owned.sessionId, 'session-abc')
+  assert.equal(owned.notifiedAt, null)
+  store.patch(owned.id, { state: 'done', finishedAt: clock })
+  const stamp = clock
+  store.patch(owned.id, { notifiedAt: stamp })
+  assert.equal(store.find(owned.id)?.notifiedAt, stamp)
+  // A panel ticket carries no Session: nothing to notify.
+  assert.equal(store.add({ task: 'panel only', source: 'panel' }).sessionId, '')
+
+  // --- reload keeps the ownership fields ----------------------------------
+  store = newStore()
+  assert.equal(store.find(owned.id)?.sessionId, 'session-abc')
+  assert.equal(store.find(owned.id)?.notifiedAt, stamp)
+
   // --- corrupt file is backed up, list starts empty ------------------------
   writeFileSync(file, '{not json')
   store = newStore()

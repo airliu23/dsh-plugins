@@ -46,9 +46,28 @@ worker 是独立进程、独立会话，失败不拖累对话；`maxWorkers` 控
 |---|---|---|
 | `post` | `title`、`task` | 投一张工单；`task` 必须自包含（路径、范围、验收标准） |
 | `board` | `status?` | 看板：排队/运行/完成/失败，每行带 id、状态、耗时、标题 |
-| `wait` | `ids[]`、`timeoutMs?` | 阻塞等这些工单结束，返回每张的完整报告（默认 60 s，上限 600 s） |
+| `wait` | `ids[]`、`timeoutMs?` | 阻塞等这些工单结束，返回每张的完整报告（默认 60 s，上限 600 s）。**只在必须本轮拿到结果时用**——正常情况下完成会自己推回来 |
 | `cancel` | `id` | 只对排队中的工单有效 |
 | `retry` | `id` | 把已结束的工单放回队列，保留 id |
+
+## 完成即推送（不用 wait）
+
+一张工单属于投它的那个 Session：`post` 时把 `sessionId` 记在工单上，worker 一结束，Host 就把报告作为一条**后续消息**推回该 Session：
+
+```
+agent.followup({ role: 'user', source: { kind: 'dsh-team', ticketId }, content: [报告] })
+await sessions.flush(agent.session)
+```
+
+于是对话里的 Agent 会自己开口汇报，不需要谁去轮询。细节：
+
+- **消息来源**：`source.kind = 'dsh-team'`，带 `ticketId`。DSH 的 source 是「各生产者各自声明 kind」的可扩展联合类型，未知 kind 由消费方忽略，所以不用抢 `schedule` / `goal` 的语义。
+- **消息工厂在本地**：bundle 是 link 进来的目录，`@deepseek-ai/dsh-llm` 从那里 resolve 不到，所以按 `createMessage` 的形状自己构造（`{ id: randomUUID(), role: 'user', content, source }` + 深冻结）——`createUserMessage` 运行时做的事就是这个。
+- **agent 从哪来**：`post` 的工具调用带着 `exec.agent`（agent loop 注入），直接记住；Host 重启过、手上没有活 agent 时，用 `sessionController.resolveAgent(sessionId)` 找回（会触发 Session 恢复）。都找不到就**不推**——宁可不打扰，也不写进一个没人看的会话。
+- **不重复**：工单上有 `notifiedAt`，推送成功后落盘；进程内还有一个 `attempted` 集合兜住「改状态 → onChange → 再推送」的回环。
+- **不重放旧账**：Host 启动时先把已结束的工单标成已通知，免得重启后把昨天的报告再推一遍。
+- **面板投的单不推**：Web 面板投的工单没有会话（`sessionId` 为空），只在看板上出现。
+- 配置：`notify`（默认 `true`）、`notifyMaxChars`（默认 4000，超出的部分留在 `reply.md`）。
 
 ## 状态与文件
 
@@ -56,11 +75,11 @@ worker 是独立进程、独立会话，失败不拖累对话；`maxWorkers` 控
 
 | 路径 | 内容 |
 |---|---|
-| `tickets.json` | 工单表（原子写：temp + rename） |
+| `tickets.json` | 工单表（原子写：temp + rename）；每张带 `sessionId`（谁投的）与 `notifiedAt`（报告推回去了没有） |
 | `worktrees/<id>/` | 该工单的工作目录，worker 的唯一可写区之一 |
 | `outbox/<id>/` | `task.txt`（含 preamble）、`reply.md`、`log.txt`、`exit` |
 
-配置（`cordis.patch.yml`）：`stateDir`、`maxWorkers`（默认 3）、`timeoutMs`（默认 1 h）、`dshBin`（默认 PATH 上的 `dsh`）、`patchFile`（可选，传给 `dsh headless --patch`，用来固定 worker 的模型路由）。
+配置（`cordis.patch.yml`）：`stateDir`、`maxWorkers`（默认 3）、`timeoutMs`（默认 1 h）、`dshBin`（默认 PATH 上的 `dsh`）、`patchFile`（可选，传给 `dsh headless --patch`，用来固定 worker 的模型路由）、`notify`、`notifyMaxChars`。
 
 ## 凭据与 worker 的模型
 
