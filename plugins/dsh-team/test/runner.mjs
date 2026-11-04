@@ -7,16 +7,26 @@
  * non-zero or to hang, so the timeout path is covered too.
  */
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, delimiter } from 'node:path'
 import { createRunner, credentialsEnv, preamble } from '../runner.js'
+import { writeFakeDsh } from './fake.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'dsh-team-runner-'))
-const fake = join(dir, 'fake-dsh')
-writeFileSync(
-  fake,
-  `#!/bin/sh
+const fake = writeFakeDsh(dir, 'fake-dsh', {
+  // `hang` must keep the process (and its stdio) alive until the timeout kills it.
+  node: `if (task.includes('hang')) {
+  setInterval(() => {}, 1_000)
+} else if (task.includes('fail')) {
+  process.stdout.write('partial\\n')
+  process.stderr.write('boom happened\\n')
+  process.exit(3)
+} else {
+  process.stdout.write(\`worker saw: \${last}\\n\`)
+  if (process.env.SOUTHCHIP_API_KEY) process.stdout.write(\`key: \${process.env.SOUTHCHIP_API_KEY}\\n\`)
+}`,
+  sh: `#!/bin/sh
 task=$(cat)
 case "$task" in
   *hang*) sleep 30 ;;
@@ -25,8 +35,7 @@ esac
 printf 'worker saw: %s\\n' "$(printf '%s' "$task" | tail -n 1)"
 [ -n "$SOUTHCHIP_API_KEY" ] && printf 'key: %s\\n' "$SOUTHCHIP_API_KEY"
 `,
-)
-chmodSync(fake, 0o755)
+})
 
 try {
   // --- provider keys are lifted out of the credentials file ---------------
@@ -66,6 +75,22 @@ try {
   const slow = await runner.run({ id: 't-3', task: 'please hang' })
   assert.equal(slow.exitCode, 124)
   assert.match(slow.error ?? '', /超时/)
+
+  // --- a bare name resolves through PATH to the shim ---------------------
+  if (process.platform === 'win32') {
+    const savedPath = process.env.PATH
+    process.env.PATH = [dir, savedPath ?? ''].filter((entry) => entry !== '').join(delimiter)
+    try {
+      const bare = await createRunner({ stateDir: dir, dshBin: 'fake-dsh', timeoutMs: 2_000, dshHome: dir }).run({
+        id: 't-5',
+        task: 'bare name',
+      })
+      assert.equal(bare.exitCode, 0)
+      assert.match(bare.report, /bare name/)
+    } finally {
+      process.env.PATH = savedPath
+    }
+  }
 
   // --- a missing binary rejects instead of pretending to fail a ticket ---
   const broken = createRunner({ stateDir: dir, dshBin: join(dir, 'nope') })

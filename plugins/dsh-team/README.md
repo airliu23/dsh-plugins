@@ -98,6 +98,7 @@ worker 的模型路由用 `patchFile` 固定，**不要**依赖 `~/.dsh/profiles
 - **Host 退出时正在跑的工单会被标记失败**（下次激活时规范化），不会自动续跑；排队中的会继续。
 - **取消只管排队中的**：正在跑的 worker 不杀，避免半写状态。
 - **没有面板**：目前只有 `team board` 和 `/plugins/dsh-team/state` 路由；侧栏 UI 是下一步。
+- **Windows**：`CreateProcess` 只认 `.exe`，而 npm / Desktop 装出来的 `dsh` 是 `.cmd` 垫片（同目录里那个无扩展名的 `dsh` 是 POSIX 脚本，跑不了）。所以 runner 先按 PATH + `PATHEXT` 把名字解析成真实文件，`.cmd`/`.bat` 走 `cmd.exe /d /s /c`，`.ps1` 走 `powershell -File`；超时用 `taskkill /t /f` 杀整棵进程树——只杀 `cmd.exe` 会留下 worker 和它的管道。`dshBin` 留空即可，也可以直接写 `dsh.cmd` 的绝对路径。测试夹具（`test/fake.mjs`）在 Windows 上生成同样的 `.cmd` 垫片，四支测试在 Windows 上都能跑。
 
 ## 测试
 
@@ -115,3 +116,5 @@ plugin_manager { action: "install_bundle", target: "/home/airliu/dsh-plugins/plu
 ```
 
 或命令行：`dsh plugin --profile web add "link:/home/airliu/dsh-plugins/plugins/dsh-team"`，然后重启 Host。
+
+Windows Desktop 版的 `desktop` profile 由 Electron 独占（`dsh plugin --profile desktop` 会被拒），装法是让 `package.json` 里出现 `"@local/dsh-team": "link:D:/.../plugins/dsh-team"` 并把它加进 `dsh.profile.bundles`，跑一次 pnpm 之后重启应用；worker 的模型路由另用 profile patch 里的 `patchFile` 指向 `<DSH_HOME>/dsh-team/worker.patch.yml`。

@@ -9,11 +9,104 @@
  * Returns the child's final answer; the caller (dispatcher) decides the state.
  */
 import { spawn } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, isAbsolute, join } from 'node:path'
+
+const WINDOWS = process.platform === 'win32'
+/**
+ * Extensions a bare command name may resolve to, in preference order. There is
+ * deliberately no empty entry: npm also writes an extension-less `dsh` (a POSIX
+ * shell script), and `CreateProcess` can only start `.exe`/`.com` plus the
+ * interpreter-routed `.cmd`/`.bat`/`.ps1` shims — never that one.
+ */
+const WINDOWS_EXTENSIONS = ['.exe', '.com', '.cmd', '.bat', '.ps1']
 
 const describe = (error) => (error instanceof Error ? error.message : String(error))
+
+/** Find a bare command on PATH, or a path command with an implicit extension. */
+function resolveWindowsCommand(command) {
+  const hasExecutableExtension = /\.(exe|com|cmd|bat|ps1)$/i.test(command)
+  if (hasExecutableExtension && existsSync(command)) return command
+  const mayBePath = isAbsolute(command) || command.includes('\\') || command.includes('/')
+  if (mayBePath) {
+    for (const extension of WINDOWS_EXTENSIONS) {
+      if (existsSync(command + extension)) return command + extension
+    }
+    return null
+  }
+  const pathext = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .filter((extension) => extension.trim() !== '')
+  const extensions = [...new Set([...WINDOWS_EXTENSIONS, ...pathext.map((extension) => extension.toLowerCase())])]
+  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
+    if (directory.trim() === '') continue
+    for (const extension of extensions) {
+      const candidate = join(directory, command + extension)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return null
+}
+
+/** Quote one argument for a `cmd.exe /c` command line; only spaces need it here. */
+const quoteArgument = (argument) => (/^[^\s"]*$/.test(argument) ? argument : `"${argument.replace(/"/g, '')}"`)
+
+/**
+ * How to start `command`. Windows cannot exec a `.cmd` shim directly —
+ * `CreateProcess` only appends `.exe`, and the `dsh` installed by npm (and by
+ * the Desktop app) is exactly such a shim — so resolve the name first and route
+ * shims through the command interpreter. Returns null when nothing matches.
+ */
+function resolveInvocation(command, args) {
+  if (!WINDOWS) return { file: command, args, verbatim: false }
+  const found = resolveWindowsCommand(command)
+  if (found === null) return null
+  if (/\.(cmd|bat)$/i.test(found)) {
+    const line = [found, ...args].map(quoteArgument).join(' ')
+    return {
+      file: process.env.ComSpec ?? 'cmd.exe',
+      args: ['/d', '/s', '/c', `"${line}"`],
+      verbatim: true,
+    }
+  }
+  if (/\.ps1$/i.test(found)) {
+    return {
+      file: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', found, ...args],
+      verbatim: false,
+    }
+  }
+  return { file: found, args, verbatim: false }
+}
+
+/**
+ * Stop a worker and everything it started. A Windows shim runs under
+ * `cmd.exe`, so killing the child alone would leave the real worker (and the
+ * stdio pipes this promise waits on) alive.
+ */
+function terminate(child) {
+  if (WINDOWS && Number.isInteger(child.pid)) {
+    try {
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+      return
+    } catch {
+      /* fall through to the signal path */
+    }
+  }
+  try {
+    child.kill('SIGTERM')
+    setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    }, 5_000).unref?.()
+  } catch {
+    /* already gone */
+  }
+}
 
 /**
  * Provider keys live in `<DSH_HOME>/.credentials.yaml` (`refs:` holds
@@ -101,12 +194,23 @@ export function createRunner(options) {
     args.push('-')
 
     return new Promise((resolve, reject) => {
+      const invocation = resolveInvocation(dshBin, args)
+      if (invocation === null) {
+        reject(
+          new Error(
+            `无法启动 worker（${dshBin}）：在 PATH 上找不到可执行文件（Windows 需要 .exe/.cmd），可在插件配置里把 dshBin 指向 dsh.cmd 的绝对路径`,
+          ),
+        )
+        return
+      }
+
       let child
       try {
-        child = spawn(dshBin, args, {
+        child = spawn(invocation.file, invocation.args, {
           cwd: stateDir,
           env: { ...credentialsEnv(options.dshHome), ...process.env, ...options.env },
           stdio: ['pipe', 'pipe', 'pipe'],
+          ...(invocation.verbatim ? { windowsVerbatimArguments: true } : {}),
         })
       } catch (error) {
         reject(new Error(`无法启动 worker（${dshBin}）：${describe(error)}`))
@@ -127,13 +231,12 @@ export function createRunner(options) {
         stderr = cap(stderr, chunk)
       })
 
+      // A timed-out worker is reported as 124 whatever the platform says about
+      // how it died: Windows force-kills the tree and reports no signal.
+      let timedOut = false
       const timer = setTimeout(() => {
-        try {
-          child.kill('SIGTERM')
-          setTimeout(() => child.kill('SIGKILL'), 5_000).unref?.()
-        } catch {
-          /* already gone */
-        }
+        timedOut = true
+        terminate(child)
       }, timeoutMs)
       timer.unref?.()
 
@@ -154,7 +257,7 @@ export function createRunner(options) {
         reject(new Error(`无法启动 worker（${dshBin}）：${describe(error)}`))
       })
       child.on('close', (code, signal) => {
-        const exitCode = Number.isInteger(code) ? code : signal ? 124 : 1
+        const exitCode = timedOut ? 124 : Number.isInteger(code) ? code : signal ? 124 : 1
         const error = exitCode === 124 ? `超时（${Math.round(timeoutMs / 1000)} s）已被终止` : ''
         finish(exitCode, error)
       })

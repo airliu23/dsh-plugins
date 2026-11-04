@@ -8,21 +8,20 @@
  * worker and comes back with its answer.
  */
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../index.js'
+import { writeFakeDsh } from './fake.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'dsh-team-plugin-'))
-const fake = join(dir, 'fake-dsh')
-writeFileSync(
-  fake,
-  `#!/bin/sh
+const fake = writeFakeDsh(dir, 'fake-dsh', {
+  node: `process.stdout.write(\`report for: \${last}\\n\`)`,
+  sh: `#!/bin/sh
 task=$(cat)
 printf 'report for: %s\\n' "$(printf '%s' "$task" | tail -n 1)"
 `,
-)
-chmodSync(fake, 0o755)
+})
 
 const registered = { tools: [], routes: [], prompts: [], cleanups: [] }
 
