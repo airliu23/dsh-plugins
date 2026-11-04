@@ -95,6 +95,9 @@ const React = {
     cursor += 1
     return fn
   },
+  useLayoutEffect(fn) {
+    return React.useEffect(fn)
+  },
   Fragment: 'fragment',
 }
 
@@ -187,7 +190,13 @@ const slots = new Map()
 const tabTypes = []
 const opened = []
 const dictionaries = []
+const panelSelections = []
 const ctx = {
+  layout: {
+    selectPanel(key) {
+      panelSelections.push(key)
+    },
+  },
   effect(fn) {
     const cleanup = fn()
     if (typeof cleanup === 'function') effects.push(cleanup)
@@ -239,7 +248,7 @@ const ctx = {
 await import('../client.js')
 assert.equal(typeof factory, 'function', 'client.js 必须向 __ModuleLoader__ 注册')
 const mod = factory(require)
-assert.deepEqual(mod.inject, ['slots', 'locale'])
+assert.deepEqual(mod.inject, ['slots', 'locale', 'layout'])
 mod.apply(ctx)
 
 // --- registrations --------------------------------------------------------
@@ -247,6 +256,7 @@ assert.deepEqual(
   [...slots.keys()].sort(),
   [
     'conversation.session.header.utilities',
+    'main',
     'sidebar.panellist',
     'sidebar.right.pane.tab',
     'sidebar.right.pane.tab.title',
@@ -306,11 +316,20 @@ const titleText = textOf(render(slots.get('sidebar.right.pane.tab.title').compon
 assert.match(titleText, /工单/)
 assert.match(titleText, /2/, '排队 1 + 运行 1 = 2')
 
-// --- the rail icon also opens the pane -----------------------------------
+// --- the rail icon is bare icon geometry (alignment) ---------------------
 const railTree = render(slots.get('sidebar.panellist').component)
-const railButton = find(railTree, (node) => node.type === 'button')
-railButton.props.onClick()
-assert.deepEqual(opened, ['dsh-team', 'dsh-team'])
+assert.equal(railTree.type, 'span', '侧栏图标必须返回 span，不能自带按钮盒子')
+assert.equal(find(railTree, (node) => node.type === 'button'), null, '侧栏图标里不该有按钮')
+const railSvg = find(railTree, (node) => node.type === 'svg')
+assert.ok(railSvg !== null, '要有图标')
+assert.equal(railSvg.props.width, 18, '默认 18px，交给侧栏决定尺寸')
+const rail20 = render(slots.get('sidebar.panellist').component, { size: 20 })
+assert.equal(find(rail20, (n) => n.type === 'svg').props.width, 20, 'props.size 要生效')
+
+// --- the rail selects the `main` bridge, which opens the pane ------------
+render(slots.get('main').component)
+assert.deepEqual(opened, ['dsh-team', 'dsh-team'], '侧栏点击经 main 桥打开右栏')
+assert.deepEqual(panelSelections, [null], '打开后把中间栏还给对话')
 
 for (const cleanup of effects.splice(0)) cleanup()
 

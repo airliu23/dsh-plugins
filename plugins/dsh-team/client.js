@@ -603,7 +603,10 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function makePanelIcon(bind, openPane) {
+    /** The rail renders the hit target; this component is only the icon inside
+     *  it, so it must not bring its own box (alignment with the built-in
+     *  entries depends on that). `props.size` comes from the rail. */
+    function makePanelIcon(bind) {
       const t = (key) => {
         try {
           const text = bind(key)
@@ -612,18 +615,38 @@ window.__ModuleLoader__.load({
           return zh[key] ?? key
         }
       }
-      return function PanelIcon() {
+      return function PanelIcon(props) {
         const data = useTickets()
-        const badge = (data.counts.queued ?? 0) + (data.counts.running ?? 0)
+        const size = Number.isFinite(props?.size) ? props.size : 18
+        const live = (data.counts.queued ?? 0) + (data.counts.running ?? 0)
         return h(
-          'button',
-          { type: 'button', className: 'dsh-team-rail', onClick: () => openPane(), title: t('nav'), 'aria-label': t('nav') },
-          h('svg', { width: 18, height: 18, viewBox: '0 0 16 16', 'aria-hidden': true },
-            h('rect', { x: 2.2, y: 2.2, width: 11.6, height: 11.6, rx: 2.4, stroke: 'currentColor', strokeWidth: 1.4, fill: 'none' }),
-            h('path', { d: 'M5 6h6M5 9.2h4', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', fill: 'none' }),
+          'span',
+          { className: 'dsh-team-rail-icon', 'aria-label': t('nav') },
+          h('svg', { viewBox: '0 0 16 16', width: size, height: size, fill: 'none', 'aria-hidden': true, style: { display: 'block' } },
+            h('rect', { x: 2.2, y: 2.2, width: 11.6, height: 11.6, rx: 2.6, stroke: 'currentColor', strokeWidth: 1.4 }),
+            h('path', { d: 'M5 6.1h6M5 9.4h4', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round' }),
           ),
-          badge > 0 ? h('span', { className: 'dsh-team-badge-count' }, String(badge)) : null,
+          live > 0
+            ? h('span', { className: 'dsh-team-rail-dot', 'aria-hidden': true })
+            : null,
         )
+      }
+    }
+
+    /** The rail selects a `main` panel by key; this one exists only so the
+     *  selection lands somewhere — it opens the right pane and hands the
+     *  center column back to the conversation. */
+    function makeBridgePanel(openPane, layout) {
+      return function TeamBridgePanel() {
+        const handled = React.useRef(false)
+        const mount = React.useLayoutEffect ?? React.useEffect
+        mount(() => {
+          if (handled.current) return
+          handled.current = true
+          openPane()
+          layout?.selectPanel?.(null)
+        }, [])
+        return null
       }
     }
 
@@ -715,13 +738,12 @@ window.__ModuleLoader__.load({
 .dsh-team-toggle { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary); font-size: 11px; cursor: pointer; transition: color 120ms ease, border-color 120ms ease, box-shadow 160ms ease; }
 .dsh-team-toggle:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
 .dsh-team-toggle-label { white-space: nowrap; }
-.dsh-team-rail { position: relative; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; transition: color 120ms ease, background 120ms ease, box-shadow 160ms ease; }
-.dsh-team-rail:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
-.dsh-team-badge-count { position: absolute; top: 1px; right: 1px; min-width: 13px; height: 13px; padding: 0 3px; border-radius: 999px; background: var(--dsw-alias-brand-primary); color: var(--dsw-alias-bg-base); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 8.5px; font-weight: 700; line-height: 13px; text-align: center; box-shadow: 0 0 10px -2px var(--dsw-alias-brand-primary); animation: dsh-team-pulse 2.4s ease-in-out infinite alternate; }
+.dsh-team-rail-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.dsh-team-rail-dot { position: absolute; top: -1px; right: -2px; width: 5px; height: 5px; border-radius: 50%; background: var(--dsw-alias-brand-primary); box-shadow: 0 0 6px var(--dsw-alias-brand-primary); animation: dsh-team-pulse 2.4s ease-in-out infinite alternate; }
 `
 
     return {
-      inject: ['slots', 'locale'],
+      inject: ['slots', 'locale', 'layout'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-team: dictionaries')
         const bind = ctx.locale.bind(NS)
@@ -756,7 +778,8 @@ window.__ModuleLoader__.load({
         const Pane = makePane(bind)
         const TabTitle = makeTabTitle(bind)
         const HeaderToggle = makeHeaderToggle(bind, openPane)
-        const PanelIcon = makePanelIcon(bind, openPane)
+        const PanelIcon = makePanelIcon(bind)
+        const BridgePanel = makeBridgePanel(openPane, ctx.layout)
 
         ctx.slots.inject('conversation.session.header.utilities', () =>
           ctx.slots.register(
@@ -769,6 +792,9 @@ window.__ModuleLoader__.load({
             { name: 'sidebar.panellist', id: 'dsh-team', order: 22, label: () => bind('nav'), locale: NS },
             PanelIcon,
           ),
+        )
+        ctx.slots.inject('main', () =>
+          ctx.slots.register({ name: 'main', key: 'dsh-team', locale: NS }, BridgePanel),
         )
         ctx.slots.inject('sidebar.right.pane.tab', () =>
           ctx.slots.register({ name: 'sidebar.right.pane.tab', key: TAB_ID, locale: NS }, Pane),
