@@ -1,0 +1,24 @@
+{
+  "name": "@local/dsh-team",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Background tickets: parallel Headless workers driven from any Session",
+  "exports": {
+    ".": "./index.js",
+    "./store": "./store.js",
+    "./runner": "./runner.js",
+    "./dispatcher": "./dispatcher.js"
+  },
+  "files": [
+    "index.js",
+    "store.js",
+    "runner.js",
+    "dispatcher.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  }
+}

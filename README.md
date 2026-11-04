@@ -57,6 +57,7 @@ plugin_manager { action: "install_bundle", target: "D:\\path\\to\\dsh-plugins\\p
 | [`serial-monitor`](plugins/serial-monitor/README.md) | 串口日志回显到右侧栏 tab，**收到就推**（SSE，不轮询）；**端口由用户在面板开关，会话只能只读**（`status/read/wait/mark/ports`）；不探测波特率，支持多路 | [README](plugins/serial-monitor/README.md) · [INSTALL](plugins/serial-monitor/INSTALL.md) |
 | [`todo-list`](plugins/todo-list/README.md) | 悬浮待办小窗：会话标题栏按钮 / 左侧栏「自动化」下方图标（`Ctrl+Shift+D`），浮在页面上不抢走聊天；可拖动、可收起、本地落盘、SSE 实时同步；会话用 `todo` 工具读写同一份数据（与 `todo_write` 计划分开） | [README](plugins/todo-list/README.md) |
 | [`stand-reminder`](plugins/stand-reminder/README.md) | 久坐提醒：默认每 60 分钟弹一次窗，提醒你站起来；「我站起来了」进入 2 分钟环形休息倒计时，可稍后/跳过；标题栏常驻倒计时；时间由 Host 记在本地文件，刷新页面不重置，关掉页面则不提醒；会话可用 `stand_reminder` 工具查看与微调 | [README](plugins/stand-reminder/README.md) |
+| [`dsh-team`](plugins/dsh-team/README.md) | 后台工单：`team` 工具把任务交给独立的 `dsh headless` worker 并行跑（post / board / wait / cancel / retry），不占当前对话；自带并发上限、凭据注入与模型补丁 | [README](plugins/dsh-team/README.md) |
 
 ## 共同前置
 

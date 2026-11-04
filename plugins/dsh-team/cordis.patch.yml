@@ -1,0 +1,12 @@
+- insert:
+    - id: dsh-team
+      name: '@local/dsh-team'
+      config:
+        # Empty = <DSH_HOME>/dsh-team. Tickets, worktrees and worker logs live here.
+        stateDir: ''
+        # How many Headless workers may run at once.
+        maxWorkers: 3
+        # Kill a worker that runs longer than this.
+        timeoutMs: 3600000
+        # The `dsh` executable used to start a worker; empty = look it up on PATH.
+        dshBin: ''
