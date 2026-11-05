@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { createTicketStore, summarize } from './store.js'
-import { createDispatcher } from './dispatcher.js'
+import { createDispatcher, openDeps } from './dispatcher.js'
 import { createRunner } from './runner.js'
 
 const ROUTE_BASE = '/plugins/dsh-team'
@@ -328,8 +328,10 @@ export function apply(ctx, config = {}) {
       const tickets = filter === undefined ? snapshot.tickets : snapshot.tickets.filter((ticket) => ticket.state === filter)
       const lines = tickets.map((ticket) => {
         const elapsed = duration(ticket.state === 'running' ? Date.now() - (ticket.startedAt ?? ticket.createdAt) : (ticket.finishedAt ?? 0) - (ticket.startedAt ?? ticket.createdAt))
-        const mark = { done: '✓', failed: '✗', canceled: '−', running: '▶', queued: '·' }[ticket.state] ?? '?'
-        return `${mark} ${ticket.id}  ${ticket.state.padEnd(8)} ${elapsed.padStart(6)}  ${ticket.title}`
+        const waiting = ticket.state === 'queued' ? openDeps(store, ticket).length : 0
+        const mark = waiting > 0 ? '⏸' : { done: '✓', failed: '✗', canceled: '−', running: '▶', queued: '·' }[ticket.state] ?? '?'
+        const gate = waiting > 0 ? `  等 ${waiting} 张上游` : ''
+        return `${mark} ${ticket.id}  ${ticket.state.padEnd(8)} ${elapsed.padStart(6)}  ${ticket.title}${gate}`
       })
       const counts = snapshot.counts
       const head = `工单：排队 ${counts.queued} / 运行 ${counts.running} / 完成 ${counts.done} / 失败 ${counts.failed}${counts.canceled > 0 ? ` / 取消 ${counts.canceled}` : ''}`
@@ -367,6 +369,7 @@ export function apply(ctx, config = {}) {
             '**什么时候用**（满足任一条）：单个子任务预计超过 3 分钟；几件事互相独立、可以并行；任务要跑很久或要脱离对话；产出是大块文本、只需归档不必逐句消化。' +
             '**什么时候别用**：一次工具调用就能拿到答案（查文件、grep、读知识库）；答案依赖本会话上下文；需要来回澄清（worker 看不到本会话，也不会反问你）。' +
             'action：post 投一张工单（title + task，task 必须自包含：说清项目路径、范围、验收标准）；board 看板；wait 阻塞等待工单结束并取回报告；cancel 取消排队中的工单；retry 重跑已结束的工单。' +
+            'post 带 `from: [id...]` 就是一个**汇总单**：它一直排在队列里等这些上游工单全部结束，开跑时上游报告会自动拼进它的 task，worker 不必重读它们读过的文件。' +
             'post 之后**不要**立刻 wait：工单结束时会自动把报告推回本会话，等通知即可；只有必须在本轮里拿到结果时才用 wait。',
           parameters: {
             type: 'object',
@@ -375,6 +378,11 @@ export function apply(ctx, config = {}) {
               title: { type: 'string', description: 'post 的短标题，一行，便于看板识别' },
               task: { type: 'string', description: 'post 的完整任务描述；worker 看不到本会话，必须自包含' },
               ids: { type: 'array', items: { type: 'string' }, description: 'wait 的工单 id 列表' },
+              from: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'post 的上游工单 id 列表：本单等它们全部结束才开跑，报告自动拼进来（汇总单）',
+              },
               id: { type: 'string', description: 'cancel / retry 的目标工单 id' },
               timeoutMs: { type: 'number', description: 'wait 的最长等待毫秒数，默认 60000，上限 600000' },
               status: { type: 'string', enum: ['all', 'queued', 'running', 'done', 'failed', 'canceled'], description: 'board 的过滤条件，默认 all' },
@@ -391,11 +399,26 @@ export function apply(ctx, config = {}) {
             if (action === 'post') {
               const sessionId = sessionIdOf(exec)
               if (sessionId !== '' && exec?.agent !== undefined) liveAgents.set(sessionId, exec.agent)
-              const ticket = store.add({ title: args?.title, task: args?.task, source: 'session', sessionId })
+              const from = Array.isArray(args?.from)
+                ? args.from.map(String)
+                : typeof args?.from === 'string'
+                  ? args.from.split(',').map((part) => part.trim())
+                  : []
+              for (const id of from) {
+                if (store.find(id) === undefined) throw new Error(`没有这张上游工单：${id}`)
+              }
+              const ticket = store.add({ title: args?.title, task: args?.task, source: 'session', sessionId, waitsFor: from })
               dispatcher.pump()
-              const tail = notifyEnabled
-                ? '结束时会自动把报告推回本会话，你不用等；现在可以继续别的事。'
-                : '完成通知已关闭（notify: false），需要结果时用 wait。'
+              const tail = [
+                ticket.waitsFor.length > 0
+                  ? `这是汇总单：等上游 ${ticket.waitsFor.length} 张（${ticket.waitsFor.join('、')}）结束后自动开始，届时它们的报告会拼进这张工单的 task。`
+                  : null,
+                notifyEnabled
+                  ? '结束时会自动把报告推回本会话，你不用等；现在可以继续别的事。'
+                  : '完成通知已关闭（notify: false），需要结果时用 wait。',
+              ]
+                .filter((line) => line !== null)
+                .join('\n')
               return { text: `已投工单 ${ticket.id}（${ticket.title}）\n${tail}\n\n${board()}` }
             }
             if (action === 'cancel') {
@@ -435,6 +458,7 @@ export function apply(ctx, config = {}) {
             '`team` 工具可以把任务交给独立 worker 并行跑：post 投单、board 看板、wait 阻塞取回。',
             '判据：单个子任务超过 3 分钟、或几件事互相独立、或需要脱离本轮对话 → 投单；一次调用就能拿到答案、或依赖本会话上下文 → 就地做。',
             '投完就继续做别的：工单结束会以一条「后台工单结束」的通知推回本会话，不需要 wait 轮询。',
+            '要总论时投一张**汇总单**（post 带 `from: [上游 id...]`）：它等上游全部结束才开跑，上游报告自动拼进它的 task——合并交给 worker，不要自己人肉汇总。',
             'worker 看不到本会话，所以 task 必须自包含（项目路径、范围、验收标准）。',
           ].join('\n'),
         }),

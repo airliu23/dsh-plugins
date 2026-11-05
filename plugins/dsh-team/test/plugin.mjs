@@ -8,7 +8,7 @@
  * worker and comes back with its answer.
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../index.js'
@@ -161,6 +161,32 @@ try {
   assert.match(notice.content[0].text, /【后台工单结束】冒烟/)
   assert.match(notice.content[0].text, /report for: 只输出一行 READY/)
   assert.equal(Object.isFrozen(notice), true)
+
+  // --- a summary ticket is gated on its upstream, then gets their reports --
+  const upstreamId = (await tool.execute({ action: 'post', title: '上游单', task: '只输出一行 UPSTREAM' })).text.match(
+    /已投工单 (t-[\w-]+)/,
+  )[1]
+  const summaryPost = await tool.execute({
+    action: 'post',
+    title: '汇总单',
+    task: '把上游结论合成一段',
+    from: [upstreamId],
+  })
+  assert.match(summaryPost.text, /这是汇总单/)
+  assert.match(summaryPost.text, /等上游 1 张/)
+  const summaryId = summaryPost.text.match(/已投工单 (t-[\w-]+)/)[1]
+
+  await tool.execute({ action: 'wait', ids: [upstreamId, summaryId], timeoutMs: 20_000 })
+  const summary = (await tool.execute({ action: 'board' })).text
+  assert.match(summary, new RegExp(`${summaryId}[\\s\\S]*?done`), '汇总单最终要跑完')
+
+  // The worker was handed the upstream report inside its own task card.
+  const taskFile = join(dir, 'outbox', summaryId, 'task.txt')
+  const composed = readFileSync(taskFile, 'utf8')
+  assert.match(composed, /## 上游工单报告/)
+  assert.match(composed, new RegExp(`### ${upstreamId}`))
+  assert.match(composed, /report for: 只输出一行 UPSTREAM/, '上游报告要被拼进汇总单的 prompt')
+  assert.match(readFileSync(join(dir, 'outbox', summaryId, 'reply.md'), 'utf8'), /report for:/)
 
   // --- a panel ticket (no Session) is never pushed -----------------------
   const panel = await tool.execute({ action: 'post', title: '面板单', task: '只输出一行 PANEL' })

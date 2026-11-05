@@ -82,10 +82,19 @@ try {
   // A panel ticket carries no Session: nothing to notify.
   assert.equal(store.add({ task: 'panel only', source: 'panel' }).sessionId, '')
 
+  // --- a summary ticket remembers what it waits for -----------------------
+  const upstream = store.add({ title: '上游', task: 'x' })
+  const summary = store.add({ title: '汇总', task: 'y', waitsFor: [upstream.id, upstream.id, '  ', 42] })
+  assert.deepEqual(summary.waitsFor, [upstream.id], '去重、丢脏值、保持顺序')
+  // The queue can be asked for a gated ticket; the gate itself is dispatcher policy.
+  assert.equal(store.nextQueued((ticket) => ticket.id === summary.id)?.id, summary.id)
+  assert.equal(store.nextQueued((ticket) => ticket.waitsFor.length === 0)?.waitsFor.length, 0)
+
   // --- reload keeps the ownership fields ----------------------------------
   store = newStore()
   assert.equal(store.find(owned.id)?.sessionId, 'session-abc')
   assert.equal(store.find(owned.id)?.notifiedAt, stamp)
+  assert.ok(store.snapshot().tickets.some((ticket) => ticket.id === summary.id && ticket.waitsFor.length === 1), '依赖关系要落盘')
 
   // --- corrupt file is backed up, list starts empty ------------------------
   writeFileSync(file, '{not json')

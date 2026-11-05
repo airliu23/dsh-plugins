@@ -19,10 +19,26 @@ export const MAX_REPORT = 20_000
 export const MAX_TASK = 20_000
 export const MAX_TITLE = 160
 const MAX_TICKETS_HARD = 5_000
+/** A summary ticket rarely waits for more than a handful of upstream tickets. */
+const MAX_DEPENDS = 32
 
 const STATES = ['queued', 'running', 'done', 'failed', 'canceled']
 
 const describe = (error) => (error instanceof Error ? error.message : String(error))
+
+/** Ticket ids a ticket waits for; order is kept, duplicates and junk dropped. */
+export function normalizeIds(value) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set()
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const id = item.trim()
+    if (id === '' || seen.has(id)) continue
+    seen.add(id)
+    if (seen.size >= MAX_DEPENDS) break
+  }
+  return [...seen]
+}
 
 /** One line for a board row: first non-empty line, hard-capped. */
 export function summarize(text, limit = 90) {
@@ -76,6 +92,8 @@ export function createTicketStore(options) {
       // The Session a ticket belongs to ('' = posted from the panel): the Host
       // pushes the finished report back to it, so nobody has to poll `wait`.
       sessionId: clamp(entry.sessionId, 200),
+      // Upstream tickets this one summarises: it stays queued until they settle.
+      waitsFor: normalizeIds(entry.waitsFor),
       notifiedAt: Number.isFinite(entry.notifiedAt) ? entry.notifiedAt : null,
       createdAt: Number.isFinite(entry.createdAt) ? entry.createdAt : now(),
       startedAt: Number.isFinite(entry.startedAt) ? entry.startedAt : null,
@@ -158,6 +176,7 @@ export function createTicketStore(options) {
       state: 'queued',
       source: clamp(input.source, 40) || 'session',
       sessionId: clamp(input.sessionId, 200),
+      waitsFor: normalizeIds(input.waitsFor),
       notifiedAt: null,
       createdAt: now(),
       startedAt: null,
@@ -190,9 +209,9 @@ export function createTicketStore(options) {
     return ticket
   }
 
-  /** The oldest queued ticket, in insertion order. */
-  function nextQueued() {
-    return tickets.find((ticket) => ticket.state === 'queued')
+  /** The oldest queued ticket in insertion order; `ready` skips gated tickets. */
+  function nextQueued(ready) {
+    return tickets.find((ticket) => ticket.state === 'queued' && (ready === undefined || ready(ticket) === true))
   }
 
   function runningCount() {

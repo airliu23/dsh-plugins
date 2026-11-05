@@ -180,13 +180,17 @@ export function createRunner(options) {
   /**
    * Run one ticket to completion. Never rejects for a worker failure — the
    * exit code carries that — only for a failure to even start the child.
+   *
+   * `body` overrides `ticket.task` when the dispatcher has already composed the
+   * prompt (a summary ticket carries its upstream reports along).
    */
-  function run(ticket) {
+  function run(ticket, body) {
     const { workspace, outDir } = paths(ticket)
     mkdirSync(workspace, { recursive: true })
     mkdirSync(outDir, { recursive: true })
 
-    const task = preamble(workspace, outDir) + ticket.task
+    const card = typeof body === 'string' && body !== '' ? body : ticket.task
+    const task = preamble(workspace, outDir) + card
     writeFileSync(join(outDir, 'task.txt'), task)
 
     const args = ['headless']
