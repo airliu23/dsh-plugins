@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Client half of the dsh-team bundle.
  *
  * One data source (the Host's `/plugins/dsh-team` routes + SSE), three seats:
@@ -55,6 +55,10 @@ window.__ModuleLoader__.load({
       copy: '复制路径',
       copied: '已复制',
       hint: 'worker 是独立进程，失败不拖累对话；运行中不能取消。',
+      summaryChip: '汇总',
+      waitingChip: '等上游',
+      upstreamsTitle: '上游',
+      feedsTitle: '被汇总',
     }
 
     const en = {
@@ -87,6 +91,10 @@ window.__ModuleLoader__.load({
       copy: 'Copy path',
       copied: 'Copied',
       hint: 'A worker is its own process: a failure never breaks the conversation. Running tickets cannot be canceled.',
+      summaryChip: 'Summary',
+      waitingChip: 'waits',
+      upstreamsTitle: 'Upstream',
+      feedsTitle: 'Summarised by',
     }
 
     const STATE_LABEL = { queued: 'queued', running: 'running', done: 'done', failed: 'failed', canceled: 'canceled' }
@@ -314,17 +322,32 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function TicketRow({ ticket, t, onOpen }) {
+    function TicketRow({ ticket, t, onOpen, depth = 0, waiting = 0 }) {
       const color = STATE_COLOR[ticket.state] ?? 'var(--dsw-alias-label-secondary)'
+      const deps = Array.isArray(ticket.waitsFor) ? ticket.waitsFor : []
+      const chips = []
+      if (deps.length > 0) {
+        chips.push(
+          h(
+            'span',
+            { key: 'sum', className: 'dsh-team-chip', title: `${t('upstreamsTitle')}:\n${deps.join('\n')}` },
+            `${t('summaryChip')} ${deps.length}`,
+          ),
+        )
+      }
+      if (waiting > 0) {
+        chips.push(h('span', { key: 'wait', className: 'dsh-team-chip is-wait' }, `${t('waitingChip')} ${waiting}`))
+      }
       return h(
         'button',
         {
           type: 'button',
-          className: `dsh-team-row${ticket.state === 'running' ? ' is-running' : ''}`,
+          className: `dsh-team-row${ticket.state === 'running' ? ' is-running' : ''}${depth > 0 ? ' is-child' : ''}`,
           onClick: () => onOpen(ticket.id),
           title: ticket.title || ticket.id,
         },
         h('span', { className: 'dsh-team-row-accent', style: { background: color, color }, 'aria-hidden': true }),
+        depth > 0 ? h('span', { className: 'dsh-team-tree', 'aria-hidden': true }, '└') : null,
         h(StateDot, { state: ticket.state }),
         h(
           'span',
@@ -338,6 +361,7 @@ window.__ModuleLoader__.load({
             h('span', null, duration(ticket)),
             h('span', { className: 'dsh-team-sep' }, '·'),
             h('code', { className: 'dsh-team-id' }, ticket.id),
+            ...chips,
           ),
         ),
         h('span', { className: 'dsh-team-chevron', 'aria-hidden': true }, '›'),
@@ -411,9 +435,31 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** One labelled row of related tickets; each chip opens that ticket. */
+    function RelationRow({ label, items, t, onOpen }) {
+      if (items.length === 0) return null
+      return h(
+        'div',
+        { className: 'dsh-team-rel' },
+        h('span', { className: 'dsh-team-rel-label' }, label),
+        ...items.map((item) =>
+          h(
+            'button',
+            { key: item.id, type: 'button', className: 'dsh-team-rel-link', title: `${item.id}\n${item.title}`, onClick: () => onOpen(item.id) },
+            `${t(STATE_LABEL[item.state] ?? 'queued')} · ${item.title || item.id}`,
+          ),
+        ),
+      )
+    }
+
     /** Detail view: same pane, one ticket, back arrow to the list. */
-    function DetailView({ ticket, t, onBack, busy, onCancel, onRetry }) {
+    function DetailView({ ticket, t, onBack, busy, onCancel, onRetry, tickets, onOpen }) {
       const color = STATE_COLOR[ticket.state] ?? 'var(--dsw-alias-label-secondary)'
+      const all = Array.isArray(tickets) ? tickets : []
+      const byId = new Map(all.map((item) => [item.id, item]))
+      const upstreams = (ticket.waitsFor ?? []).map((id) => byId.get(id)).filter((item) => item !== undefined)
+      const parents = all.filter((item) => (item.waitsFor ?? []).includes(ticket.id))
+      const hasRelation = upstreams.length > 0 || parents.length > 0
       return h(
         'div',
         { className: 'dsh-team-detail' },
@@ -434,6 +480,14 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dsh-team-detail-title' }, ticket.title || ticket.id),
         h('div', { className: 'dsh-team-detail-meta' },
           `${ticket.id}${Number.isInteger(ticket.exitCode) ? `  ·  exit ${ticket.exitCode}` : ''}`),
+        hasRelation
+          ? h(
+              'div',
+              { className: 'dsh-team-rel-block' },
+              h(RelationRow, { label: t('upstreamsTitle'), items: upstreams, t, onOpen }),
+              h(RelationRow, { label: t('feedsTitle'), items: parents, t, onOpen }),
+            )
+          : null,
         h('div', { className: 'dsh-team-detail-body' }, h(ReportBlock, { ticket, t, tall: true })),
         h(
           'div',
@@ -478,6 +532,8 @@ window.__ModuleLoader__.load({
               ticket,
               t,
               busy,
+              tickets: data.tickets,
+              onOpen: setSelected,
               onBack: () => setSelected(null),
               onCancel: async () => {
                 setBusy(true)
@@ -507,7 +563,43 @@ window.__ModuleLoader__.load({
           return true
         })
 
-        const rows = tickets.map((item) => h(TicketRow, { key: item.id, ticket: item, t, onOpen: setSelected }))
+        // A summary ticket owns its upstreams: nest them instead of listing
+        // both, so the board reads as layers rather than a flat log.
+        const byId = new Map(data.tickets.map((item) => [item.id, item]))
+        const visible = new Set(tickets.map((item) => item.id))
+        const childOf = new Map()
+        for (const item of data.tickets) {
+          for (const id of item.waitsFor ?? []) {
+            if (id !== item.id && byId.has(id) && !childOf.has(id)) childOf.set(id, item.id)
+          }
+        }
+        const childrenOf = new Map()
+        for (const [child, parent] of childOf) {
+          if (!visible.has(child) || !visible.has(parent)) continue
+          const list = childrenOf.get(parent) ?? []
+          list.push(child)
+          childrenOf.set(parent, list)
+        }
+        const roots = tickets.filter((item) => {
+          const parent = childOf.get(item.id)
+          return parent === undefined || parent === item.id || !visible.has(parent)
+        })
+
+        const rows = []
+        const walk = (item, depth, trail) => {
+          if (trail.has(item.id)) return
+          const seen = new Set(trail).add(item.id)
+          const kids = (childrenOf.get(item.id) ?? []).map((id) => byId.get(id)).filter((child) => child !== undefined)
+          const waiting = (item.waitsFor ?? []).filter((id) => {
+            const dep = byId.get(id)
+            return dep !== undefined && !isTerminal(dep)
+          }).length
+          rows.push(
+            h(TicketRow, { key: item.id, ticket: item, t, onOpen: setSelected, depth, waiting }),
+          )
+          for (const kid of kids) walk(kid, depth + 1, seen)
+        }
+        for (const item of roots) walk(item, 0, new Set())
 
         const body = !data.loaded
           ? h('div', { className: 'dsh-team-empty' }, h('span', null, data.error !== null ? t('loadFailed') : t('loading')))
@@ -712,6 +804,17 @@ window.__ModuleLoader__.load({
 .dsh-team-sep { opacity: 0.45; }
 .dsh-team-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9px; opacity: 0.75; font-variant-numeric: tabular-nums; }
 .dsh-team-chevron { flex: 0 0 auto; align-self: center; color: var(--dsw-alias-label-secondary); font-size: 14px; opacity: 0.6; }
+
+.dsh-team-row.is-child { margin-left: 13px; }
+.dsh-team-tree { flex: 0 0 auto; align-self: center; font-size: 9px; color: var(--dsw-alias-label-secondary); opacity: 0.55; }
+.dsh-team-chip { flex: 0 0 auto; padding: 0 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 4px; background: var(--dsw-alias-bg-layer-1); font-size: 8.5px; letter-spacing: 0.02em; color: var(--dsw-alias-label-secondary); }
+.dsh-team-chip.is-wait { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); }
+.dsh-team-chip.is-quiet { opacity: 0.65; }
+.dsh-team-rel-block { display: flex; flex-direction: column; gap: 4px; padding: 0 14px 8px; }
+.dsh-team-rel { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.dsh-team-rel-label { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dsw-alias-label-secondary); opacity: 0.75; }
+.dsh-team-rel-link { max-width: 100%; padding: 1px 6px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 5px; background: transparent; color: var(--dsw-alias-label-primary); font-size: 9.5px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: border-color 120ms ease; }
+.dsh-team-rel-link:hover { border-color: var(--dsw-alias-brand-primary); }
 
 .dsh-team-detail { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .dsh-team-detail-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px 8px; }

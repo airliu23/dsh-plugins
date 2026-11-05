@@ -150,7 +150,7 @@ const find = (node, predicate) => {
 const snapshot = {
   note: null,
   version: 3,
-  counts: { queued: 1, running: 1, done: 1, failed: 1, canceled: 0 },
+  counts: { queued: 1, running: 1, done: 4, failed: 1, canceled: 0 },
   tickets: [
     {
       id: 't-aaaa1111',
@@ -175,6 +175,45 @@ const snapshot = {
       report: '',
       error: 'worker 退出码 1',
       outDir: '/home/airliu/.dsh/dsh-team/outbox/t-bbbb2222',
+    },
+    {
+      id: 't-cccc3333',
+      title: '切片甲',
+      state: 'done',
+      createdAt: 1_700_000_000_000,
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_012_000,
+      exitCode: 0,
+      report: '甲的报告',
+      error: '',
+      waitsFor: [],
+      outDir: '',
+    },
+    {
+      id: 't-dddd4444',
+      title: '切片乙',
+      state: 'done',
+      createdAt: 1_700_000_000_000,
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_014_000,
+      exitCode: 0,
+      report: '乙的报告',
+      error: '',
+      waitsFor: [],
+      outDir: '',
+    },
+    {
+      id: 't-eeee5555',
+      title: '汇总单',
+      state: 'done',
+      createdAt: 1_700_000_000_000,
+      startedAt: 1_700_000_020_000,
+      finishedAt: 1_700_000_032_000,
+      exitCode: 0,
+      report: '甲比乙完整',
+      error: '',
+      waitsFor: ['t-cccc3333', 't-dddd4444'],
+      outDir: '',
     },
   ],
 }
@@ -310,6 +349,37 @@ assert.match(detailText, /列表/, '详情页要有返回入口')
 assert.match(detailText, /结论：状态机表与 def 不一致/, '详情页要显示完整报告')
 assert.match(detailText, /t-aaaa1111/)
 assert.doesNotMatch(detailText, /任务正文/, '详情页不该还显示投单表单')
+
+// --- a summary ticket nests its upstreams, instead of a flat log ---------
+const back = find(detailTree, (node) => typeof node.props?.className === 'string' && node.props.className.startsWith('dsh-team-back'))
+assert.ok(back !== null, '详情页要能回到列表')
+back.props.onClick()
+const tree = render(Pane)
+
+const everyRow = []
+const pick = (node) => {
+  if (node === null || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    node.forEach(pick)
+    return
+  }
+  if (typeof node.props?.className === 'string' && node.props.className.startsWith('dsh-team-row')) everyRow.push(node)
+  pick(node.children)
+  pick(node.props?.children)
+}
+pick(tree)
+const summaryRow = everyRow.find((row) => textOf(row).includes('汇总单'))
+assert.ok(summaryRow !== undefined, '汇总单要有一行')
+assert.match(textOf(summaryRow), /汇总 2/, '汇总行要看得出它收了几张上游')
+const childRows = everyRow.filter((row) => row.props.className.includes('is-child'))
+assert.equal(childRows.length, 2, '两张上游缩进挂在汇总单下面，而不是平铺')
+assert.equal(childRows.some((row) => textOf(row).includes('切片甲')), true)
+
+summaryRow.props.onClick()
+const summaryDetail = textOf(render(Pane))
+assert.match(summaryDetail, /上游/, '详情页要列上游')
+assert.match(summaryDetail, /切片甲/, '上游是可点的关联行')
+assert.match(summaryDetail, /甲比乙完整/, '详情页显示汇总单自己的报告')
 
 // --- the tab title carries a live badge ----------------------------------
 const titleText = textOf(render(slots.get('sidebar.right.pane.tab.title').component))
