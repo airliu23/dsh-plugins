@@ -346,7 +346,7 @@ export function apply(ctx, config = {}) {
     const existing = streams.get(key)
     if (existing !== undefined && existing.child !== null) return existing
 
-    const capture = existing ?? { key, port, baud, child: null, chunks: [], kept: 0, total: 0, portBytes: 0, error: null, startedAt: Date.now(), openedAt: null }
+    const capture = existing ?? { key, port, baud, child: null, chunks: [], kept: 0, total: 0, portBytes: 0, portBase: 0, error: null, startedAt: Date.now(), openedAt: null }
     capture.error = null
     capture.child = null
     capture.openedAt = null
@@ -384,11 +384,14 @@ export function apply(ctx, config = {}) {
         if (message.type === 'data' && typeof message.text === 'string') appendTo(capture, message.text)
         else if (message.type === 'stats' && Number.isFinite(message.bytes)) {
           // Bytes actually pulled off the wire, counted in the sidecar. If this
-          // runs ahead of `capture.total` (characters), the gap is multibyte
-          // decoding, not loss; if it stalls while the board talks, the driver
-          // dropped before we ever saw it.
-          capture.portBytes = message.bytes
+          // falls behind `capture.total` (characters), the driver dropped bytes
+          // before we ever saw them; if it runs ahead, the text is multi-byte.
+          capture.portBytes = (capture.portBase ?? 0) + message.bytes
         } else if (message.type === 'opened') {
+          // A (re)started sidecar counts its own bytes from zero. Carry the
+          // running total into the new instance so `portBytes` stays comparable
+          // with `total` across a retry instead of dropping back to zero.
+          capture.portBase = capture.portBytes ?? 0
           capture.openedAt = Date.now()
           capture.error = null
           publishState(capture)

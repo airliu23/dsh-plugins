@@ -78,7 +78,16 @@ def main():
 
     counter = 0
     last_stats = time.monotonic()
+    # FAKE_REOPEN_MS simulates a driver hiccup: the capture dies and comes back
+    # on a fresh process, whose byte counter starts at zero again.
+    reopen_at = float(os.environ.get("FAKE_REOPEN_MS", "0") or "0") / 1000.0
+    started = time.monotonic()
+    reopened = False
     while not stop.is_set():
+        if reopen_at > 0 and not reopened and time.monotonic() - started >= reopen_at:
+            reopened = True
+            emit({"type": "opened", "port": port, "baud": baud, "pid": 0})
+            sent = 0
         counter += 1
         line = "[tx] line %d\n" % counter
         sent += len(line.encode("utf-8"))

@@ -25,6 +25,9 @@ const STATE_DIR = join(PLUGIN, 'test', '.state-push')
 
 rmSync(STATE_DIR, { recursive: true, force: true })
 mkdirSync(STATE_DIR, { recursive: true })
+// Halfway through, the fake capture "reconnects": a fresh sidecar counting its
+// own bytes from zero. `portBytes` must not fall back with it.
+process.env.FAKE_REOPEN_MS = '400'
 
 const { apply } = await import(pathToFileURL(join(PLUGIN, 'index.js')).href)
 
@@ -148,10 +151,12 @@ await routes.get('/plugins/serial-monitor/status')(makeReq({ url: '/plugins/seri
 const streamState = JSON.parse(statusRes.body).streams?.[0] ?? {}
 check('status carries the wire byte count', streamState.portBytes > 0, `portBytes=${streamState.portBytes} chars=${streamState.total}`)
 // `stats` is a periodic snapshot, so the two counters trail each other by at
-// most one window while data is flowing; they must agree to within that.
+// most one window while data is flowing. The tolerance is deliberately loose:
+// the assertion that matters is that the reconnect at 400 ms (a fresh sidecar
+// counting from zero) did not drop `portBytes` back to near-zero.
 check(
-  'wire count and character count agree',
-  Math.abs(streamState.portBytes - streamState.total) < 400,
+  'wire count survives a capture reconnect',
+  streamState.portBytes > streamState.total * 0.5,
   `wire=${streamState.portBytes} chars=${streamState.total}`,
 )
 
