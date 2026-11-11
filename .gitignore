@@ -24,3 +24,21 @@ desktop.ini
 
 # logs
 *.log
+
+# local scratch that ended up in the repo root (Lark exports, one-off scripts).
+# These are personal working files, not part of any plugin — keep them out of a
+# public repository.
+bot_send_test.json
+test2.json
+test_msgs.json
+collect_week.ps1
+collect_week2.ps1
+dump_messages.ps1
+evt_err.txt
+evt_out.txt
+lark_*.json
+lark_*.png
+lark_*.md
+lark_week/
+lark_week2/
+weekly_report_*.md
