@@ -53,6 +53,12 @@ window.__ModuleLoader__.load({
       running: '接收中',
       idle: '未连接',
       portList: '端口列表',
+      freezeView: '暂停显示',
+      resumeView: '继续',
+      frozen: '已暂停',
+      freezeHint: '冻结这一屏：端口继续收数据，只是面板不再跟着滚，点「继续」看最新的',
+      resumeViewHint: '回到最新，继续跟随',
+      frozenHint: '端口没停，新数据还在缓冲里；点「继续」显示',
     }
 
     const en = {
@@ -80,6 +86,12 @@ window.__ModuleLoader__.load({
       running: 'Receiving',
       idle: 'Not connected',
       portList: 'Ports',
+      freezeView: 'Freeze',
+      resumeView: 'Resume',
+      frozen: 'Frozen',
+      freezeHint: 'Freeze this card: the port keeps receiving, the panel just stops following — press Resume to jump to the newest line',
+      resumeViewHint: 'Jump to the newest line and follow again',
+      frozenHint: 'The port is still receiving; new bytes are buffered until you press Resume',
     }
 
     const store = {
@@ -121,7 +133,7 @@ window.__ModuleLoader__.load({
         if (typeof event.key !== 'string' || typeof event.text !== 'string') return
         let stream = this.byKey.get(event.key)
         if (stream === undefined) {
-          stream = { key: event.key, port: event.port, baud: event.baud, text: '', cursor: 0, total: 0, running: false, error: null }
+          stream = { key: event.key, port: event.port, baud: event.baud, text: '', cursor: 0, total: 0, running: false, error: null, frozen: false, frozenText: '', frozenTotal: 0 }
           this.byKey.set(event.key, stream)
           this.streams.push(stream)
         }
@@ -153,7 +165,39 @@ window.__ModuleLoader__.load({
         }
       },
       clearText() {
-        for (const stream of this.streams) stream.text = ''
+        for (const stream of this.streams) {
+          stream.text = ''
+          stream.frozenText = ''
+        }
+        this.emit()
+      },
+      /**
+       * Freeze one card's view. The capture keeps running and `text` keeps
+       * growing, so nothing is lost — only the rendering stops, which is what
+       * you want when a 1.5 Mbaud log scrolls faster than you can read it.
+       */
+      setFrozen(key, frozen) {
+        const stream = this.byKey.get(key)
+        if (stream === undefined) return
+        if (frozen) {
+          stream.frozenText = stream.text
+          stream.frozenTotal = stream.total
+          stream.pinPending = false
+        } else {
+          stream.frozenText = ''
+          // Resume always jumps to the newest line, whatever the scroll was.
+          stream.pinPending = true
+        }
+        stream.frozen = frozen === true
+        this.emit()
+      },
+      /** What a card should paint: the frozen snapshot, or the live tail. */
+      viewText(stream) {
+        return stream.frozen === true ? stream.frozenText : stream.text
+      },
+      /** Bytes that arrived while the view was frozen. */
+      pendingSinceFreeze(stream) {
+        return stream.frozen === true ? Math.max(0, stream.total - stream.frozenTotal) : 0
       },
       apply(payload, options) {
         if (typeof payload !== 'object' || payload === null) return
@@ -183,7 +227,7 @@ window.__ModuleLoader__.load({
           seen.add(incoming.key)
           let stream = this.byKey.get(incoming.key)
           if (stream === undefined) {
-            stream = { key: incoming.key, port: incoming.port, baud: incoming.baud, text: '', cursor: 0, total: 0, running: false, error: null }
+            stream = { key: incoming.key, port: incoming.port, baud: incoming.baud, text: '', cursor: 0, total: 0, running: false, error: null, frozen: false, frozenText: '', frozenTotal: 0 }
             this.byKey.set(incoming.key, stream)
             this.streams.push(stream)
             changed = true
@@ -508,7 +552,8 @@ window.__ModuleLoader__.load({
         // Keyed on the stream's total, not on the retained text length: once
         // the text hits TEXT_LIMIT its length stops changing, and a length-based
         // dependency would silently stop following the tail at high baud rates.
-        const growth = state.streams.map((stream) => `${stream.key}:${stream.total}`).join('|')
+        // The freeze flag rides along so that pressing "Resume" re-pins the card.
+        const growth = state.streams.map((stream) => `${stream.key}:${stream.total}:${stream.frozen === true ? 'f' : 'r'}`).join('|')
 
         // Pinning must work for whichever node actually scrolls: with a
         // definite-height pane it is the card's own `pre`, but if the tab is
@@ -527,7 +572,19 @@ window.__ModuleLoader__.load({
 
         React.useEffect(() => {
           if (!state.autoscroll) return
-          for (const stream of state.streams) if (stickRef.current.get(stream.key) !== false) pin(stream.key)
+          for (const stream of state.streams) {
+            // "Resume" means "show me the newest line", even if the reader had
+            // scrolled the frozen card away from the tail.
+            if (stream.pinPending === true) {
+              stream.pinPending = false
+              pin(stream.key)
+              continue
+            }
+            // A frozen card is a photograph: leave the scroll where the reader
+            // put it.
+            if (stream.frozen === true) continue
+            if (stickRef.current.get(stream.key) !== false) pin(stream.key)
+          }
         }, [growth, state.autoscroll])
 
         const act = async (path, body) => {
@@ -593,6 +650,18 @@ window.__ModuleLoader__.load({
                     stream.error,
                   )
                 : h('span', { style: { flex: 1 } }),
+              stream.frozen === true
+                ? h(
+                    'span',
+                    { style: { ...subtle, flex: '0 0 auto', color: 'var(--dsw-alias-state-warn-primary)' }, title: translate('frozenHint') },
+                    `${translate('frozen')}${state.pendingSinceFreeze(stream) > 0 ? ` +${state.pendingSinceFreeze(stream)} ${translate('bytes')}` : ''}`,
+                  )
+                : null,
+              h(
+                'button',
+                { type: 'button', onClick: () => state.setFrozen(stream.key, stream.frozen !== true), style: actionStyle, title: translate(stream.frozen === true ? 'resumeViewHint' : 'freezeHint') },
+                translate(stream.frozen === true ? 'resumeView' : 'freezeView'),
+              ),
               h('button', { type: 'button', onClick: () => void act('remove', { key: stream.key }), style: actionStyle }, translate('remove')),
             ),
             h(
@@ -627,11 +696,11 @@ window.__ModuleLoader__.load({
                   boxSizing: 'border-box',
                 },
               },
-              stream.text === ''
+              state.viewText(stream) === ''
                 ? h('span', { style: subtle }, stream.truncated ? translate('truncated') : '…')
-                : stream.text.length > DISPLAY_LIMIT
-                  ? `…\n${stream.text.slice(stream.text.length - DISPLAY_LIMIT)}`
-                  : stream.text,
+                : state.viewText(stream).length > DISPLAY_LIMIT
+                  ? `…\n${state.viewText(stream).slice(state.viewText(stream).length - DISPLAY_LIMIT)}`
+                  : state.viewText(stream),
             ),
           ),
         )

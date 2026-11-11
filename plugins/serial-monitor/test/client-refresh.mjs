@@ -194,12 +194,33 @@ function commit(tree) {
 const bodyComponent = registrations.get('sidebar.right.pane.tab')?.component
 if (bodyComponent === undefined) throw new Error('the panel body slot was not registered')
 
+let lastTree = null
+
 function render() {
   hookIndex = 0
   stats.renders += 1
   const tree = bodyComponent({})
+  lastTree = tree
   commit(tree)
   return flatten(tree).join(' | ')
+}
+
+/** Locate a rendered button by the text it displays (the locale stub is identity). */
+function findButton(node, label) {
+  if (node === null || node === undefined || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findButton(child, label)
+      if (hit !== null) return hit
+    }
+    return null
+  }
+  if (node.tag === 'button' && flatten(node.children).join('').trim() === label) return node
+  for (const child of node.children ?? []) {
+    const hit = findButton(child, label)
+    if (hit !== null) return hit
+  }
+  return null
 }
 
 // ---------------------------------------------------------------- fake backend
@@ -304,7 +325,31 @@ check('pane renders only the tail', text.length < 80_000, `${text.length} chars 
 check('newest line is visible', text.includes('[end 11]'))
 check('pane still follows after the text cap', first.atBottom, `scrollTop=${first.scrollTop}`)
 
-// 9) A closed stream disappears on the pushed `gone` frame.
+// 9) Freeze: the port keeps receiving, the card stops painting, and Reserve
+//    jumps back to the newest line.
+text = render()
+const freezeButton = findButton(lastTree, 'freezeView')
+check('the card has a freeze button', freezeButton !== null)
+freezeButton?.props?.onClick?.()
+await tick(60)
+const beforeFreeze = render()
+check('frozen card keeps its text', beforeFreeze.includes('[end 11]'))
+check('the button flips to resume', findButton(lastTree, 'resumeView') !== null)
+
+push('[tx] arrived while frozen\n')
+await tick(80)
+const whileFrozen = render()
+check('new bytes do not repaint the frozen card', !whileFrozen.includes('arrived while frozen'))
+check('the badge reports what is waiting', whileFrozen.includes('frozen') && /\+\d+/.test(whileFrozen), whileFrozen.slice(-160))
+
+findButton(lastTree, 'resumeView')?.props?.onClick?.()
+await tick(80)
+const afterResume = render()
+check('resume shows the newest line', afterResume.includes('arrived while frozen'))
+check('resume jumps back to the tail', first.atBottom, `scrollTop=${first.scrollTop}`)
+check('the button flips back to freeze', findButton(lastTree, 'freezeView') !== null)
+
+// 10) A closed stream disappears on the pushed `gone` frame.
 source.fire('gone', { key: KEY })
 await tick(40)
 text = render()
